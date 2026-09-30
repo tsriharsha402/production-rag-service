@@ -1,0 +1,17 @@
+{
+  "cases": 46,
+  "answerable": 41,
+  "unanswerable": 5,
+  "retrieval_hit_at_1": 0.9024,
+  "retrieval_hit_at_k": 0.9512,
+  "retrieval_mrr": 0.9167,
+  "answer_keyword_recall": 0.6098,
+  "citation_accuracy": 0.7805,
+  "false_abstention_rate": 0.1707,
+  "abstention_accuracy": 0.8,
+  "pass_rate": 0.6304,
+  "total_cost_usd": 0.0,
+  "avg_cost_per_question_usd": 0.0,
+  "latency_ms_p50": 0.2,
+  "latency_ms_p95": 0.2
+}

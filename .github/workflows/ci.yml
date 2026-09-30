@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Unit tests
+        run: pytest
+      - name: Evaluation quality gate
+        run: >-
+          python evals/run_evals.py
+          --min-hit-at-k 0.90
+          --min-keyword-recall 0.55
+          --min-abstention-accuracy 0.60
+      - name: Publish eval report
+        if: always()
+        run: cat evals/results/offline.md >> "$GITHUB_STEP_SUMMARY"
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t production-rag-service .
+      - name: Smoke test
+        run: |
+          docker run -d --name api -p 8000:8000 -e LLM_PROVIDER=offline production-rag-service
+          for i in $(seq 1 20); do curl -fs localhost:8000/healthz && break; sleep 1; done
+          curl -fs -X POST localhost:8000/v1/query \
+            -H 'content-type: application/json' \
+            -d '{"question": "When is the holiday change freeze?"}'
