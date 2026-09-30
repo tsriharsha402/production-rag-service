@@ -27,6 +27,6 @@ when the documents do not cover a question.
 - Every answer is auditable, and abstentions are measurable in the evaluation suite
   (abstention accuracy and false abstention rate).
 - Opus is the most expensive option for a Q&A workload. The companion project
-  `llm-model-selection` will measure whether `claude-sonnet-5-5` or `claude-haiku-4-5`
+  [llm-model-selection](https://github.com/tsriharsha402/llm-model-selection) measures whether `claude-sonnet-5-5` or `claude-haiku-4-5`
   holds quality on this evaluation set at lower cost and latency. Switching is a
   configuration change, not a code change.

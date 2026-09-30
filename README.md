@@ -155,10 +155,14 @@ to be replaced with measured numbers from `make eval-live`:
 
 | Assumption | Value |
 |---|---|
-| Input per question (system prompt + 4 chunks + question) | ~1,500 tokens → $0.006 |
+| Input per question (system prompt + ~4 chunks + question) | ~450 tokens → $0.002 |
 | Output per question (answer + reasoning) | ~500 tokens → $0.010 |
-| **Cost per uncached question** | **~$0.016** |
-| 1,000 questions/day at a 30% cache hit rate | ~$11/day, ~$340/month |
+| **Cost per uncached question** | **~$0.012** |
+| 1,000 questions/day at a 30% cache hit rate | ~$8/day, ~$250/month |
+
+Output tokens dominate the cost, so the first quality-trading lever is `LLM_EFFORT`.
+Whether a cheaper configuration holds quality on this task is measured in the companion
+project [llm-model-selection](https://github.com/tsriharsha402/llm-model-selection).
 
 The levers, in order: caching (free), abstaining without an LLM call (free), lowering
 `LLM_EFFORT`, then a smaller model if the evaluation suite shows quality holds.
