@@ -1,0 +1,46 @@
+{"id": "oncall-01", "question": "How fast do I need to acknowledge a SEV1 page?", "answerable": true, "expected_doc": "oncall-policy", "expected_keywords": ["5 minutes"]}
+{"id": "oncall-02", "question": "What happens if the primary doesn't respond to a page?", "answerable": true, "expected_doc": "oncall-policy", "expected_keywords": ["secondary", "10 minutes"]}
+{"id": "oncall-03", "question": "How much extra pay do I get for being primary on call?", "answerable": true, "expected_doc": "oncall-policy", "expected_keywords": ["$500"]}
+{"id": "oncall-04", "question": "Do I get a day off after a rough on-call week with lots of night pages?", "answerable": true, "expected_doc": "oncall-policy", "expected_keywords": ["compensatory day off"]}
+{"id": "oncall-05", "question": "When does the on-call rotation hand over?", "answerable": true, "expected_doc": "oncall-policy", "expected_keywords": ["Monday", "10:00"]}
+{"id": "incident-01", "question": "What counts as a SEV1 incident?", "answerable": true, "expected_doc": "incident-response", "expected_keywords": ["25%"]}
+{"id": "incident-02", "question": "How often should the status page be updated during a major outage?", "answerable": true, "expected_doc": "incident-response", "expected_keywords": ["30 minutes"]}
+{"id": "incident-03", "question": "What is the deadline for writing a postmortem?", "answerable": true, "expected_doc": "incident-response", "expected_keywords": ["5 business days"]}
+{"id": "incident-04", "question": "How do I declare an incident?", "answerable": true, "expected_doc": "incident-response", "expected_keywords": ["/incident"]}
+{"id": "incident-05", "question": "Does the incident commander debug the problem?", "answerable": true, "expected_doc": "incident-response", "expected_keywords": ["does not debug"]}
+{"id": "deploy-01", "question": "Can I ship a change to production on a Friday?", "answerable": true, "expected_doc": "deployment-process", "expected_keywords": ["hotfix"]}
+{"id": "deploy-02", "question": "When is the holiday change freeze?", "answerable": true, "expected_doc": "deployment-process", "expected_keywords": ["December 15", "January 5"]}
+{"id": "deploy-03", "question": "What triggers an automatic rollback of a canary?", "answerable": true, "expected_doc": "deployment-process", "expected_keywords": ["2%", "30%"]}
+{"id": "deploy-04", "question": "How long does a canary run and how much traffic does it get?", "answerable": true, "expected_doc": "deployment-process", "expected_keywords": ["5%", "30 minutes"]}
+{"id": "deploy-05", "question": "Do user-facing changes need a feature flag?", "answerable": true, "expected_doc": "deployment-process", "expected_keywords": ["feature flag"]}
+{"id": "review-01", "question": "How many approvals does a change to the payments code need?", "answerable": true, "expected_doc": "code-review-guidelines", "expected_keywords": ["two approvals"]}
+{"id": "review-02", "question": "What is the maximum recommended size for a pull request?", "answerable": true, "expected_doc": "code-review-guidelines", "expected_keywords": ["400"]}
+{"id": "review-03", "question": "How quickly are reviewers expected to respond?", "answerable": true, "expected_doc": "code-review-guidelines", "expected_keywords": ["one business day"]}
+{"id": "pto-01", "question": "How many vacation days do I get each year?", "answerable": true, "expected_doc": "pto-policy", "expected_keywords": ["25 days"]}
+{"id": "pto-02", "question": "Can I carry unused vacation days over to next year?", "answerable": true, "expected_doc": "pto-policy", "expected_keywords": ["5", "March 31"]}
+{"id": "pto-03", "question": "When do I need a doctor's note for being sick?", "answerable": true, "expected_doc": "pto-policy", "expected_keywords": ["3 consecutive days"]}
+{"id": "expense-01", "question": "What is the daily meal allowance when traveling?", "answerable": true, "expected_doc": "expense-policy", "expected_keywords": ["$75"]}
+{"id": "expense-02", "question": "How much can I spend on courses and conferences?", "answerable": true, "expected_doc": "expense-policy", "expected_keywords": ["$1,500"]}
+{"id": "expense-03", "question": "Which purchases need approval before I buy them?", "answerable": true, "expected_doc": "expense-policy", "expected_keywords": ["$500"]}
+{"id": "expense-04", "question": "Can I fly premium economy?", "answerable": true, "expected_doc": "expense-policy", "expected_keywords": ["6 hours"]}
+{"id": "security-01", "question": "How do I get access to production?", "answerable": true, "expected_doc": "security-access", "expected_keywords": ["just-in-time", "4 hours"]}
+{"id": "security-02", "question": "I lost my laptop. What should I do?", "answerable": true, "expected_doc": "security-access", "expected_keywords": ["security@northwind.example", "1 hour"]}
+{"id": "security-03", "question": "Can I use SMS codes for two-factor authentication?", "answerable": true, "expected_doc": "security-access", "expected_keywords": ["hardware security key"]}
+{"id": "ai-01", "question": "What do we need before changing the prompt of an AI feature in production?", "answerable": true, "expected_doc": "ai-usage-policy", "expected_keywords": ["evaluation suite"]}
+{"id": "ai-02", "question": "Can I paste customer data into any chatbot?", "answerable": true, "expected_doc": "ai-usage-policy", "expected_keywords": ["approved"]}
+{"id": "ai-03", "question": "Who reviews an AI feature before it launches to customers?", "answerable": true, "expected_doc": "ai-usage-policy", "expected_keywords": ["AI Council"]}
+{"id": "onboarding-01", "question": "When should a new engineer merge their first pull request?", "answerable": true, "expected_doc": "onboarding", "expected_keywords": ["first week"]}
+{"id": "onboarding-02", "question": "How long do new hires have to finish security training?", "answerable": true, "expected_doc": "onboarding", "expected_keywords": ["14 days"]}
+{"id": "hard-01", "question": "Someone emailed me asking for my password. Who should I tell?", "answerable": true, "expected_doc": "security-access", "expected_keywords": ["security@northwind.example"]}
+{"id": "hard-02", "question": "How much will the company give me to set up my desk at home?", "answerable": true, "expected_doc": "expense-policy", "expected_keywords": ["$750"]}
+{"id": "hard-03", "question": "My team keeps getting woken up by alerts that need no action. What is supposed to happen to them?", "answerable": true, "expected_doc": "oncall-policy", "expected_keywords": ["runbook"]}
+{"id": "hard-04", "question": "Is it okay to push a fix forward instead of reverting while things are on fire?", "answerable": true, "expected_doc": "deployment-process", "expected_keywords": ["rolling back"]}
+{"id": "hard-05", "question": "Who has to sign off on my code if I touch the login system?", "answerable": true, "expected_doc": "code-review-guidelines", "expected_keywords": ["code owner"]}
+{"id": "hard-06", "question": "Can I ship a schema change in the same release as the code that uses it?", "answerable": true, "expected_doc": "deployment-process", "expected_keywords": ["separately"]}
+{"id": "hard-07", "question": "When can a new hire start taking pages?", "answerable": true, "expected_doc": "onboarding", "expected_keywords": ["day 90"]}
+{"id": "hard-08", "question": "Do I have to tell customers when text was written by a model?", "answerable": true, "expected_doc": "ai-usage-policy", "expected_keywords": ["labeled"]}
+{"id": "none-01", "question": "What is the parental leave policy?", "answerable": false}
+{"id": "none-02", "question": "How does the stock option vesting schedule work?", "answerable": false}
+{"id": "none-03", "question": "Can I work remotely from another country for a month?", "answerable": false}
+{"id": "none-04", "question": "What is the company's 401k match?", "answerable": false}
+{"id": "none-05", "question": "Which programming language should new services be written in?", "answerable": false}
