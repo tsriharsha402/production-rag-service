@@ -14,7 +14,7 @@
 | Overall pass rate | 63.0% |
 | Total cost | $0.0000 |
 | Avg cost per question | $0.00000 |
-| Latency p50 / p95 | 0.2 ms / 0.2 ms |
+| Latency p50 / p95 | 0.3 ms / 0.5 ms |
 
 ## Failed cases
 
