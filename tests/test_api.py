@@ -114,3 +114,54 @@ def test_changing_answer_settings_never_serves_stale_cached_answers(settings, pi
     finally:
         llm.PROMPT_VERSION = original
     assert len(namespaces) == 4
+
+
+def test_rate_limit_cannot_be_bypassed_with_identity_headers(settings, pipeline):
+    from dataclasses import replace
+
+    client = TestClient(create_app(replace(settings, rate_limit_per_minute=1), pipeline))
+    question = {"question": "How many PTO days?"}
+    first = client.post("/v1/query", json=question, headers={"x-client-id": "a"})
+    assert first.status_code == 200
+    # A new client ID or a forged X-Forwarded-For used to get a fresh bucket.
+    assert client.post("/v1/query", json=question, headers={"x-client-id": "b"}).status_code == 429
+    forged = {"x-forwarded-for": "203.0.113.7"}
+    assert client.post("/v1/query", json=question, headers=forged).status_code == 429
+
+
+def test_rate_limit_behind_a_trusted_proxy(settings, pipeline):
+    from dataclasses import replace
+
+    app = create_app(replace(settings, rate_limit_per_minute=1, trusted_proxy_hops=1), pipeline)
+    client = TestClient(app)
+    question = {"question": "How many PTO days?"}
+
+    def ask(forwarded_for: str) -> int:
+        return client.post(
+            "/v1/query", json=question, headers={"x-forwarded-for": forwarded_for}
+        ).status_code
+
+    # Two real clients behind the load balancer get separate buckets.
+    assert ask("198.51.100.1") == 200
+    assert ask("198.51.100.2") == 200
+    # Entries to the left of the one the proxy appended are client-controlled and ignored.
+    assert ask("10.0.0.99, 198.51.100.1") == 429
+
+
+def test_client_ip_resolution():
+    from starlette.requests import Request
+
+    from rag_service.api import client_ip
+
+    def request(forwarded_for: str | None) -> Request:
+        headers = [(b"x-forwarded-for", forwarded_for.encode())] if forwarded_for else []
+        return Request({"type": "http", "headers": headers, "client": ("192.0.2.10", 1234)})
+
+    assert client_ip(request("1.1.1.1"), trusted_proxy_hops=0) == "192.0.2.10"
+    assert client_ip(request("forged, 198.51.100.1"), trusted_proxy_hops=1) == "198.51.100.1"
+    assert client_ip(request("forged, 198.51.100.1, 10.0.0.2"), trusted_proxy_hops=2) == (
+        "198.51.100.1"
+    )
+    # Fewer entries than proxies means the header is incomplete: fall back to the peer.
+    assert client_ip(request("198.51.100.1"), trusted_proxy_hops=2) == "192.0.2.10"
+    assert client_ip(request(None), trusted_proxy_hops=1) == "192.0.2.10"
