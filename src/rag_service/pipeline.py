@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from rag_service.cache import AnswerCache, cache_key
+from rag_service.cache import AnswerCache, cache_key, cache_namespace
 from rag_service.llm import ABSTAIN_MESSAGE, LLMProvider
 from rag_service.pricing import cost_usd
 from rag_service.retrieval import BM25Index
@@ -28,9 +28,20 @@ class RAGPipeline:
         self.top_k = top_k
         self.min_retrieval_score = min_retrieval_score
 
+    @property
+    def cache_namespace(self) -> str:
+        # Computed on every call, so swapping the provider or changing retrieval settings
+        # can never reuse answers produced under the old configuration.
+        return cache_namespace(
+            self.corpus_version,
+            self.provider.fingerprint,
+            f"top_k={self.top_k}",
+            f"min_score={self.min_retrieval_score}",
+        )
+
     def answer(self, question: str) -> QueryResponse:
         started = time.perf_counter()
-        key = cache_key(question, self.provider.model, self.corpus_version)
+        key = cache_key(question, self.cache_namespace)
 
         cached = self.cache.get(key)
         if cached is not None:

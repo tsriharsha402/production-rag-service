@@ -12,6 +12,7 @@ See docs/decisions/0002-provider-interface-with-offline-baseline.md.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -32,6 +33,10 @@ answer using only the search results attached to their message.
 followed by one sentence on what information is missing.
 - Lead with the direct answer, then add only the details the employee needs to act on it.
 - Keep answers under 120 words. Use plain sentences; no headings."""
+
+# Changes whenever the prompt text changes. Part of the answer cache key, so editing the
+# prompt never serves answers produced under the old one.
+PROMPT_VERSION = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()[:8]
 
 # Models that accept the server-side refusal fallback (`fallbacks: "default"`).
 _FALLBACK_MODELS = frozenset(
@@ -66,6 +71,11 @@ class LLMProvider(Protocol):
     name: str
     model: str
 
+    @property
+    def fingerprint(self) -> str:
+        """Every setting that can change an answer. Used to namespace the answer cache."""
+        ...
+
     def generate(self, question: str, sources: list[Chunk]) -> Generation: ...
 
 
@@ -86,6 +96,14 @@ class AnthropicProvider:
         self.refusal_fallback = refusal_fallback and model in _FALLBACK_MODELS
         # The SDK already retries 408/409/429/5xx and connection errors with backoff.
         self._client = client or anthropic.Anthropic(timeout=60.0, max_retries=2)
+
+    @property
+    def fingerprint(self) -> str:
+        # The refusal fallback is excluded: it only affects refusals, which are never cached.
+        return (
+            f"anthropic|{self.model}|effort={self.effort}|prompt={PROMPT_VERSION}"
+            f"|max_tokens={self.max_output_tokens}"
+        )
 
     def build_request(self, question: str, sources: list[Chunk]) -> dict[str, Any]:
         content: list[dict[str, Any]] = [
@@ -165,6 +183,10 @@ class OfflineProvider:
 
     def __init__(self, min_overlap: int = 2) -> None:
         self.min_overlap = min_overlap
+
+    @property
+    def fingerprint(self) -> str:
+        return f"offline|{self.model}|min_overlap={self.min_overlap}"
 
     def generate(self, question: str, sources: list[Chunk]) -> Generation:
         question_terms = set(tokenize(question))
