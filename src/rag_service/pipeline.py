@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 
+from rag_service.budget import DailyBudget
 from rag_service.cache import AnswerCache, cache_key, cache_namespace
 from rag_service.llm import ABSTAIN_MESSAGE, LLMProvider
 from rag_service.pricing import cost_usd
@@ -20,6 +21,7 @@ class RAGPipeline:
         corpus_version: str,
         top_k: int = 8,
         min_retrieval_score: float = 1.0,
+        budget: DailyBudget | None = None,
     ) -> None:
         self.index = index
         self.provider = provider
@@ -27,6 +29,7 @@ class RAGPipeline:
         self.corpus_version = corpus_version
         self.top_k = top_k
         self.min_retrieval_score = min_retrieval_score
+        self.budget = budget
 
     @property
     def cache_namespace(self) -> str:
@@ -85,6 +88,9 @@ class RAGPipeline:
             )
         else:
             sources = [hit.chunk for hit in hits]
+            if self.budget is not None:
+                # Only paid calls are capped: cache hits and abstentions above still work.
+                self.budget.check()
             generation = self.provider.generate(question, sources)
             citations: list[Citation] = []
             seen: set[tuple[int, str]] = set()
@@ -127,6 +133,15 @@ class RAGPipeline:
                     latency_ms=_elapsed_ms(started),
                 ),
             )
+            if self.budget is not None and generation.model != "offline-extractive":
+                spent = response.usage.cost_usd
+                if spent is None:
+                    # A fallback model without a known price: count it at the configured
+                    # model's price rather than letting it bypass the cap.
+                    spent = cost_usd(
+                        self.provider.model, generation.input_tokens, generation.output_tokens
+                    )
+                self.budget.record(spent or 0.0)
             if generation.refused:
                 return response  # never cache refusals
 
