@@ -34,6 +34,9 @@ class Settings:
     redis_url: str = "redis://localhost:6379/0"
 
     rate_limit_per_minute: int = 30
+    # Number of trusted reverse proxies / load balancers in front of the service. 0 means
+    # clients connect directly and X-Forwarded-For is ignored, since clients can forge it.
+    trusted_proxy_hops: int = 0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -52,6 +55,7 @@ class Settings:
             rate_limit_per_minute=int(
                 _env("RATE_LIMIT_PER_MINUTE", str(cls.rate_limit_per_minute))
             ),
+            trusted_proxy_hops=int(_env("TRUSTED_PROXY_HOPS", str(cls.trusted_proxy_hops))),
         )
 
     def resolved_provider(self) -> str:

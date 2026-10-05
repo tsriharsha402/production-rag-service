@@ -27,6 +27,24 @@ from rag_service.schemas import QueryRequest, QueryResponse
 logger = logging.getLogger("rag_service")
 
 
+def client_ip(request: Request, trusted_proxy_hops: int = 0) -> str:
+    """The address to rate-limit on.
+
+    Never trusts identity headers the client controls: a client could send a new value with
+    every request and never be limited. With no trusted proxies this is the TCP peer address.
+    Behind N trusted proxies, each proxy appends the address it received the request from to
+    X-Forwarded-For, so the real client is the Nth entry from the right; anything further left
+    may be forged.
+    """
+    peer = request.client.host if request.client else "unknown"
+    if trusted_proxy_hops <= 0:
+        return peer
+    hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+    if len(hops) >= trusted_proxy_hops:
+        return hops[-trusted_proxy_hops]
+    return peer
+
+
 def build_provider(settings: Settings) -> LLMProvider:
     provider = settings.resolved_provider()
     if provider == "anthropic":
@@ -114,10 +132,7 @@ def create_app(settings: Settings | None = None, pipeline: RAGPipeline | None = 
 
     @app.post("/v1/query", response_model=QueryResponse)
     def query(body: QueryRequest, request: Request):
-        client_id = request.headers.get("x-client-id") or (
-            request.client.host if request.client else "anonymous"
-        )
-        allowed, retry_after = limiter.check(client_id)
+        allowed, retry_after = limiter.check(client_ip(request, settings.trusted_proxy_hops))
         if not allowed:
             metrics.record_rate_limited()
             return JSONResponse(
