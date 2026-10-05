@@ -30,6 +30,7 @@ def main() -> int:
     parser.add_argument("--min-hit-at-k", type=float, default=0.0)
     parser.add_argument("--min-keyword-recall", type=float, default=0.0)
     parser.add_argument("--min-abstention-accuracy", type=float, default=0.0)
+    parser.add_argument("--min-context-recall", type=float, default=0.0)
     args = parser.parse_args()
 
     settings = Settings(
@@ -62,6 +63,7 @@ def main() -> int:
         "retrieval_hit_at_k": args.min_hit_at_k,
         "answer_keyword_recall": args.min_keyword_recall,
         "abstention_accuracy": args.min_abstention_accuracy,
+        "retrieval_context_recall": args.min_context_recall,
     }
     failures = [
         f"{name} {summary[name]:.3f} < {floor:.3f}"
