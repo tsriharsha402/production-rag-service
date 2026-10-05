@@ -24,7 +24,9 @@ class Settings:
     refusal_fallback: bool = True
 
     corpus_dir: Path = Path("data/handbook")
-    top_k: int = 4
+    # 8 retrieves the answer-bearing section for 92.7% of answerable eval questions vs. 82.9%
+    # at 4, for ~150 more input tokens. See docs/decisions/0005-retrieve-eight-chunks.md.
+    top_k: int = 8
     # BM25 scores below this are treated as "no relevant document" and the
     # service abstains without paying for an LLM call.
     min_retrieval_score: float = 1.0

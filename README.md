@@ -124,6 +124,7 @@ and the facts the answer must contain.
 | Metric | What it measures |
 |---|---|
 | Retrieval hit@1 / hit@k / MRR | Did retrieval surface the right document, and how high? |
+| Context recall | Did the text sent to the model contain every required fact? Stricter than hit@k: the right document's wrong section passes hit@k but leaves nothing to answer from |
 | Answer keyword recall | Does the answer contain the required facts? |
 | Citation accuracy | Does the answer cite the right document? |
 | False abstention rate | How often it says "I don't know" when the answer is in the documents |
@@ -132,14 +133,14 @@ and the facts the answer must contain.
 
 **Offline baseline** (measured, runs in CI on every push; full report in [`evals/results/offline.md`](evals/results/offline.md)):
 
-| Retrieval hit@1 | Retrieval hit@k | MRR | Keyword recall | Citation accuracy | Abstention accuracy |
-|---|---|---|---|---|---|
-| 90.2% | 95.1% | 0.917 | 61.0% | 78.0% | 80.0% |
+| Retrieval hit@1 | Retrieval hit@k | MRR | Context recall | Keyword recall | Citation accuracy | Abstention accuracy |
+|---|---|---|---|---|---|---|
+| 90.2% | 97.6% | 0.920 | 92.7% | 61.0% | 78.0% | 80.0% |
 
 The retrieval numbers apply to every configuration. The answer numbers are a floor from
 a deliberately simple extractive baseline, not the product's quality. CI fails the build
-if retrieval hit@k drops below 90%, keyword recall below 55% or abstention accuracy below
-60%, so a regression in chunking or retrieval can't merge silently.
+if retrieval hit@k drops below 90%, context recall below 90%, keyword recall below 55% or
+abstention accuracy below 60%, so a regression in chunking or retrieval can't merge silently.
 
 **With Claude** (`claude-opus-5-5`, effort medium; measured 2026-10-05 with `make eval-live`;
 full report in [`evals/results/claude-opus-5-5.md`](evals/results/claude-opus-5-5.md)):
@@ -154,6 +155,14 @@ one the required fact was not in the retrieved chunks. Retrieval found the right
 but the wrong *section* (6 cases) or nothing above the score threshold (1 case). The
 doc-level hit@k of 95.1% overstates retrieval: only 82.9% of answerable questions get the
 chunk that contains the answer. Retrieval, not the model, is the bottleneck.
+
+**Since this run:** retrieval now sends 8 chunks instead of 4
+([ADR 0005](docs/decisions/0005-retrieve-eight-chunks.md),
+[experiment](evals/results/retrieval-experiment.md)), raising context recall from 82.9% to
+92.7%. That puts the answer in front of the model for 4 of the 7 failed questions. The other 3
+share no vocabulary with their answers and need semantic search
+([issue #2](https://github.com/tsriharsha402/production-rag-service/issues/2)). The Claude
+numbers above are from the 4-chunk run; a re-run with `make eval-live` is pending.
 
 ## Cost model
 
@@ -187,6 +196,7 @@ The levers, in order: caching (free), abstaining without an LLM call (free), low
 - [0002: Provider interface with an offline baseline](docs/decisions/0002-provider-interface-with-offline-baseline.md)
 - [0003: Exact-match answer cache before a semantic cache](docs/decisions/0003-exact-match-answer-cache.md)
 - [0004: Grounded answers with native citations; model defaults](docs/decisions/0004-grounding-citations-and-model-choice.md)
+- [0005: Retrieve 8 chunks instead of 4](docs/decisions/0005-retrieve-eight-chunks.md)
 
 ## Limitations
 

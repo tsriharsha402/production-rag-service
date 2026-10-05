@@ -16,7 +16,7 @@ format:
 
 # Offline baseline with the same quality gate CI enforces.
 eval:
-	python evals/run_evals.py --min-hit-at-k 0.90 --min-keyword-recall 0.55 --min-abstention-accuracy 0.60
+	python evals/run_evals.py --min-hit-at-k 0.90 --min-keyword-recall 0.55 --min-abstention-accuracy 0.60 --min-context-recall 0.90
 
 # Claude. Needs ANTHROPIC_API_KEY and costs real money (roughly $1 for the full set).
 eval-live:
