@@ -15,9 +15,15 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 
-def cache_key(question: str, model: str, corpus_version: str) -> str:
+def cache_namespace(*parts: object) -> str:
+    """Short hash of everything that can change an answer: documents, model, prompt,
+    model settings and retrieval settings. Changing any of them starts a fresh cache."""
+    return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:16]
+
+
+def cache_key(question: str, namespace: str) -> str:
     normalized = " ".join(question.lower().split()).rstrip("?.! ")
-    raw = f"{corpus_version}|{model}|{normalized}"
+    raw = f"{namespace}|{normalized}"
     return "rag:answer:" + hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 

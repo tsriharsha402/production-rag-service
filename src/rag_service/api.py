@@ -105,6 +105,7 @@ def create_app(settings: Settings | None = None, pipeline: RAGPipeline | None = 
             "model": pipeline.provider.model,
             "chunks_indexed": len(pipeline.index.chunks),
             "corpus_version": pipeline.corpus_version,
+            "cache_namespace": pipeline.cache_namespace,
         }
 
     @app.get("/v1/metrics")

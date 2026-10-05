@@ -44,7 +44,7 @@ flowchart LR
 | Retrieval | BM25 over section-aware chunks | Zero infrastructure, a strong baseline ([ADR 0001](docs/decisions/0001-start-with-bm25-retrieval.md)) |
 | Generation | Claude (`claude-opus-5-5`) with `search_result` blocks | Every citation quotes a retrieved chunk verbatim ([ADR 0004](docs/decisions/0004-grounding-citations-and-model-choice.md)) |
 | Offline mode | Deterministic extractive baseline | Tests and CI need no API key ([ADR 0002](docs/decisions/0002-provider-interface-with-offline-baseline.md)) |
-| Cache | In-memory LRU+TTL, or Redis | Invalidated automatically when documents change ([ADR 0003](docs/decisions/0003-exact-match-answer-cache.md)) |
+| Cache | In-memory LRU+TTL, or Redis | Invalidated automatically when documents, the prompt, or model or retrieval settings change ([ADR 0003](docs/decisions/0003-exact-match-answer-cache.md)) |
 | Rate limiting | Token bucket per client | Protects the API budget from runaway clients |
 | Observability | Structured JSON logs, request IDs, `/v1/metrics` | p50/p95 latency, spend, cache hit rate, abstentions |
 
@@ -112,7 +112,7 @@ curl -s localhost:8000/v1/query \
 |---|---|
 | `POST /v1/query` | Answer a question. Returns 429 with `Retry-After` when rate limited, 503 when the model API is unavailable. |
 | `GET /v1/metrics` | Requests, cache hit rate, abstentions, errors, p50/p95 latency, tokens, total and average cost |
-| `GET /healthz` | Provider, model, number of indexed chunks, corpus version |
+| `GET /healthz` | Provider, model, number of indexed chunks, corpus version, cache namespace |
 
 ## Evaluation
 
