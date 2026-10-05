@@ -45,7 +45,7 @@ flowchart LR
 | Generation | Claude (`claude-opus-5-5`) with `search_result` blocks | Every citation quotes a retrieved chunk verbatim ([ADR 0004](docs/decisions/0004-grounding-citations-and-model-choice.md)) |
 | Offline mode | Deterministic extractive baseline | Tests and CI need no API key ([ADR 0002](docs/decisions/0002-provider-interface-with-offline-baseline.md)) |
 | Cache | In-memory LRU+TTL, or Redis | Invalidated automatically when documents, the prompt, or model or retrieval settings change ([ADR 0003](docs/decisions/0003-exact-match-answer-cache.md)) |
-| Rate limiting | Token bucket per client | Protects the API budget from runaway clients |
+| Rate limiting | Token bucket per client IP, proxy-aware; ignores client-supplied identity headers | Protects the API budget from runaway clients |
 | Observability | Structured JSON logs, request IDs, `/v1/metrics` | p50/p95 latency, spend, cache hit rate, abstentions |
 
 ## Quickstart
@@ -193,8 +193,9 @@ The levers, in order: caching (free), abstaining without an LLM call (free), low
 - **Lexical retrieval** misses paraphrases with no shared words. It is the main source of
   retrieval failures in the evaluation set.
 - **Single-turn only.** No conversation history or follow-up questions.
-- **No authentication.** Rate limiting is per client ID or IP. Put it behind an API
-  gateway or SSO before exposing it.
+- **No authentication.** Rate limiting is per client IP address (set `TRUSTED_PROXY_HOPS`
+  when running behind a load balancer). Put it behind an API gateway or SSO before
+  exposing it, and rate-limit on the authenticated user instead.
 - **In-process metrics** reset on restart and are per replica. Production would export
   them to Prometheus or OpenTelemetry.
 - **Small evaluation set.** 46 questions catch regressions but aren't enough to compare
