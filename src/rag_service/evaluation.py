@@ -30,6 +30,10 @@ class CaseResult:
     keyword_recall: float
     cost_usd: float
     latency_ms: float
+    # Whether the context sent to the model contained every required fact. Stricter than
+    # hit@k, which only checks the document: the right document's wrong section passes hit@k
+    # but leaves the model nothing to answer from.
+    context_has_answer: bool = False
 
     @property
     def rank(self) -> int | None:
@@ -59,6 +63,8 @@ def run_case(pipeline: RAGPipeline, case: EvalCase) -> CaseResult:
     response = pipeline.answer(case.question)
     answer_lower = response.answer.lower()
     found = [kw for kw in case.expected_keywords if kw.lower() in answer_lower]
+    texts = {chunk.chunk_id: chunk.text for chunk in pipeline.index.chunks}
+    context = " ".join(texts.get(r.chunk_id, "") for r in response.retrieved).lower()
     return CaseResult(
         case=case,
         answer=response.answer,
@@ -68,6 +74,8 @@ def run_case(pipeline: RAGPipeline, case: EvalCase) -> CaseResult:
         keyword_recall=len(found) / len(case.expected_keywords) if case.expected_keywords else 1.0,
         cost_usd=response.usage.cost_usd or 0.0,
         latency_ms=response.usage.latency_ms,
+        context_has_answer=bool(case.expected_keywords)
+        and all(kw.lower() in context for kw in case.expected_keywords),
     )
 
 
@@ -87,6 +95,9 @@ def summarize(results: list[CaseResult]) -> dict[str, Any]:
         "retrieval_hit_at_1": mean([1.0 if rank == 1 else 0.0 for rank in ranks]),
         "retrieval_hit_at_k": mean([1.0 if rank else 0.0 for rank in ranks]),
         "retrieval_mrr": mean([1.0 / rank if rank else 0.0 for rank in ranks]),
+        "retrieval_context_recall": mean(
+            [1.0 if r.context_has_answer else 0.0 for r in answerable]
+        ),
         "answer_keyword_recall": mean([r.keyword_recall for r in answerable]),
         "citation_accuracy": mean(
             [1.0 if r.case.expected_doc in r.cited_docs else 0.0 for r in answerable]
@@ -118,6 +129,7 @@ def render_markdown(summary: dict[str, Any], results: list[CaseResult], label: s
         f"| Retrieval hit@1 | {pct('retrieval_hit_at_1')} |",
         f"| Retrieval hit@k | {pct('retrieval_hit_at_k')} |",
         f"| Retrieval MRR | {summary['retrieval_mrr']:.3f} |",
+        f"| Context recall (answer in retrieved text) | {pct('retrieval_context_recall')} |",
         f"| Answer keyword recall | {pct('answer_keyword_recall')} |",
         f"| Citation accuracy | {pct('citation_accuracy')} |",
         f"| False abstention rate | {pct('false_abstention_rate')} |",
