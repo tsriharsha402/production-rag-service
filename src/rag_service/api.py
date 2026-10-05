@@ -14,12 +14,14 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from rag_service import __version__
+from rag_service.budget import BudgetExceeded, DailyBudget, InMemorySpendStore, RedisSpendStore
 from rag_service.cache import AnswerCache, InMemoryCache, NullCache, RedisCache
 from rag_service.config import Settings
 from rag_service.documents import chunk_document, corpus_version, load_documents
 from rag_service.llm import AnthropicProvider, LLMError, LLMProvider, OfflineProvider
 from rag_service.metrics import Metrics
 from rag_service.pipeline import RAGPipeline
+from rag_service.pricing import PRICES_PER_MTOK
 from rag_service.rate_limit import RateLimiter
 from rag_service.retrieval import BM25Index
 from rag_service.schemas import QueryRequest, QueryResponse
@@ -67,16 +69,47 @@ def build_cache(settings: Settings) -> AnswerCache:
     return NullCache()
 
 
+def build_budget(settings: Settings, provider: LLMProvider) -> DailyBudget | None:
+    if settings.daily_budget_usd <= 0:
+        return None
+    if provider.name == "anthropic" and provider.model not in PRICES_PER_MTOK:
+        # Fail closed: without a price the cap can't be enforced.
+        raise ValueError(
+            f"DAILY_BUDGET_USD is set but {provider.model!r} has no price in pricing.py. "
+            "Add its price, or set DAILY_BUDGET_USD=0 to run without a spend cap."
+        )
+    store = (
+        RedisSpendStore.from_url(settings.redis_url)
+        if settings.cache_backend == "redis"
+        else InMemorySpendStore()
+    )
+
+    def warn(spent: float, limit: float) -> None:
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "budget_warning",
+                    "spent_today_usd": round(spent, 4),
+                    "daily_budget_usd": limit,
+                }
+            )
+        )
+
+    return DailyBudget(settings.daily_budget_usd, store, on_warning=warn)
+
+
 def build_pipeline(settings: Settings, provider: LLMProvider | None = None) -> RAGPipeline:
     docs = load_documents(settings.corpus_dir)
     chunks = [chunk for doc in docs for chunk in chunk_document(doc)]
+    provider = provider or build_provider(settings)
     return RAGPipeline(
         index=BM25Index(chunks),
-        provider=provider or build_provider(settings),
+        provider=provider,
         cache=build_cache(settings),
         corpus_version=corpus_version(docs),
         top_k=settings.top_k,
         min_retrieval_score=settings.min_retrieval_score,
+        budget=build_budget(settings, provider),
     )
 
 
@@ -128,7 +161,10 @@ def create_app(settings: Settings | None = None, pipeline: RAGPipeline | None = 
 
     @app.get("/v1/metrics")
     def get_metrics() -> dict:
-        return metrics.snapshot()
+        snapshot = metrics.snapshot()
+        if pipeline.budget is not None:
+            snapshot.update(pipeline.budget.snapshot())
+        return snapshot
 
     @app.post("/v1/query", response_model=QueryResponse)
     def query(body: QueryRequest, request: Request):
@@ -142,6 +178,26 @@ def create_app(settings: Settings | None = None, pipeline: RAGPipeline | None = 
             )
         try:
             result = pipeline.answer(body.question)
+        except BudgetExceeded as exc:
+            metrics.record_budget_rejection()
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "budget_exceeded",
+                        "request_id": request.state.request_id,
+                        "spent_today_usd": round(exc.spent_usd, 4),
+                        "daily_budget_usd": exc.limit_usd,
+                    }
+                )
+            )
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "detail": "The daily AI budget has been reached. Previously answered "
+                    "questions still work; new answers resume at 00:00 UTC."
+                },
+                headers={"Retry-After": str(exc.retry_after_seconds)},
+            )
         except LLMError as exc:
             metrics.record_error()
             logger.warning(

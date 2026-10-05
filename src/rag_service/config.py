@@ -36,6 +36,8 @@ class Settings:
     redis_url: str = "redis://localhost:6379/0"
 
     rate_limit_per_minute: int = 30
+    # Total model spend allowed per UTC day across all clients. 0 disables the cap.
+    daily_budget_usd: float = 10.0
     # Number of trusted reverse proxies / load balancers in front of the service. 0 means
     # clients connect directly and X-Forwarded-For is ignored, since clients can forge it.
     trusted_proxy_hops: int = 0
@@ -58,6 +60,7 @@ class Settings:
                 _env("RATE_LIMIT_PER_MINUTE", str(cls.rate_limit_per_minute))
             ),
             trusted_proxy_hops=int(_env("TRUSTED_PROXY_HOPS", str(cls.trusted_proxy_hops))),
+            daily_budget_usd=float(_env("DAILY_BUDGET_USD", str(cls.daily_budget_usd))),
         )
 
     def resolved_provider(self) -> str:

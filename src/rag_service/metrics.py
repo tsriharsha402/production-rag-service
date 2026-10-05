@@ -26,6 +26,7 @@ class Metrics:
         self.abstentions = 0
         self.errors = 0
         self.rate_limited = 0
+        self.budget_rejections = 0
         self.input_tokens = 0
         self.output_tokens = 0
         self.cost_usd = 0.0
@@ -59,6 +60,10 @@ class Metrics:
         with self._lock:
             self.rate_limited += 1
 
+    def record_budget_rejection(self) -> None:
+        with self._lock:
+            self.budget_rejections += 1
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             latencies = list(self._latencies)
@@ -70,6 +75,7 @@ class Metrics:
                 "abstentions": self.abstentions,
                 "errors": self.errors,
                 "rate_limited": self.rate_limited,
+                "budget_rejections": self.budget_rejections,
                 "latency_ms_p50": round(percentile(latencies, 50), 1),
                 "latency_ms_p95": round(percentile(latencies, 95), 1),
                 "input_tokens": self.input_tokens,
