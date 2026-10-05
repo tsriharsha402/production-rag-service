@@ -1,4 +1,4 @@
-from rag_service.cache import InMemoryCache, RedisCache, cache_key
+from rag_service.cache import InMemoryCache, RedisCache, cache_key, cache_namespace
 from rag_service.pricing import cost_usd
 from rag_service.rate_limit import RateLimiter
 
@@ -12,11 +12,24 @@ class FakeClock:
 
 
 def test_cache_key_normalizes_whitespace_case_and_punctuation():
-    assert cache_key("Can I deploy on Friday?", "m", "v1") == cache_key(
-        "  can i   deploy on friday ", "m", "v1"
+    assert cache_key("Can I deploy on Friday?", "ns") == cache_key(
+        "  can i   deploy on friday ", "ns"
     )
-    assert cache_key("q", "m", "v1") != cache_key("q", "m", "v2")
-    assert cache_key("q", "m1", "v1") != cache_key("q", "m2", "v1")
+    assert cache_key("q", "ns1") != cache_key("q", "ns2")
+
+
+def test_cache_namespace_changes_with_any_part():
+    base = cache_namespace("corpus-v1", "anthropic|claude-opus-5-5|effort=medium", "top_k=4")
+    assert base == cache_namespace(
+        "corpus-v1", "anthropic|claude-opus-5-5|effort=medium", "top_k=4"
+    )
+    assert base != cache_namespace(
+        "corpus-v2", "anthropic|claude-opus-5-5|effort=medium", "top_k=4"
+    )
+    assert base != cache_namespace("corpus-v1", "anthropic|claude-opus-5-5|effort=low", "top_k=4")
+    assert base != cache_namespace(
+        "corpus-v1", "anthropic|claude-opus-5-5|effort=medium", "top_k=6"
+    )
 
 
 def test_in_memory_cache_expires_entries():
