@@ -54,6 +54,8 @@ if question:
         pass
     elif response.status_code == 429:
         st.warning(f"Rate limited. Try again in {response.headers.get('retry-after', '?')}s.")
+    elif response.status_code == 503 and "budget" in response.text:
+        st.warning(response.json()["detail"])
     elif not response.ok:
         st.error(f"The API returned {response.status_code}: {response.text}")
     else:
