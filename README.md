@@ -15,7 +15,7 @@ gates every change in CI, caching, rate limiting and per-request cost tracking.
 | **Problem** | Employees lose time searching policy docs, and generic chatbots answer confidently from outside knowledge, sometimes wrongly. |
 | **Solution** | A retrieval-augmented API that answers only from the company's documents, cites the exact supporting text, and says "I don't know" when the documents don't cover a question. |
 | **Quality** | 46-question evaluation set runs in CI on every change. With Claude, 84.8% of questions pass and it never answered a question the documents can't answer (see [Evaluation](#evaluation)). |
-| **Cost control** | Cost is tracked per request. Repeated questions are served from cache for $0, and questions with no relevant documents are answered without calling the model. |
+| **Cost control** | Cost is tracked per request, and a daily spend cap stops new paid answers once the day's budget is used. Repeated questions are served from cache for $0, and questions with no relevant documents are answered without calling the model. |
 | **Risk control** | Verifiable citations, explicit abstention, rate limiting per client, no secrets in code, refusal fallback, decision records for every major tradeoff. |
 
 ![Handbook Assistant UI](docs/images/ui.png)
@@ -46,6 +46,7 @@ flowchart LR
 | Offline mode | Deterministic extractive baseline | Tests and CI need no API key ([ADR 0002](docs/decisions/0002-provider-interface-with-offline-baseline.md)) |
 | Cache | In-memory LRU+TTL, or Redis | Invalidated automatically when documents, the prompt, or model or retrieval settings change ([ADR 0003](docs/decisions/0003-exact-match-answer-cache.md)) |
 | Rate limiting | Token bucket per client IP, proxy-aware; ignores client-supplied identity headers | Protects the API budget from runaway clients |
+| Spend cap | Daily USD budget across all clients, shared via Redis across replicas ([ADR 0006](docs/decisions/0006-daily-spend-cap.md)) | Bounds the worst-case bill, even from many clients at once; cached answers keep working when it's reached |
 | Observability | Structured JSON logs, request IDs, `/v1/metrics` | p50/p95 latency, spend, cache hit rate, abstentions |
 
 ## Quickstart
@@ -110,8 +111,8 @@ curl -s localhost:8000/v1/query \
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/query` | Answer a question. Returns 429 with `Retry-After` when rate limited, 503 when the model API is unavailable. |
-| `GET /v1/metrics` | Requests, cache hit rate, abstentions, errors, p50/p95 latency, tokens, total and average cost |
+| `POST /v1/query` | Answer a question. Returns 429 with `Retry-After` when rate limited, 503 when the model API is unavailable, and 503 with `Retry-After` (seconds to midnight UTC) when the daily budget is used up. |
+| `GET /v1/metrics` | Requests, cache hit rate, abstentions, errors, budget rejections, p50/p95 latency, tokens, total and average cost, spend today and budget remaining |
 | `GET /healthz` | Provider, model, number of indexed chunks, corpus version, cache namespace |
 
 ## Evaluation
@@ -189,6 +190,8 @@ project [llm-model-selection](https://github.com/tsriharsha402/llm-model-selecti
 
 The levers, in order: caching (free), abstaining without an LLM call (free), lowering
 `LLM_EFFORT`, then a smaller model if the evaluation suite shows quality holds.
+`DAILY_BUDGET_USD` (default $10/day) is the backstop: whatever the traffic, the worst-case
+daily bill is bounded, and an 80% warning is logged before the cap is hit.
 
 ## Design decisions
 
@@ -197,6 +200,7 @@ The levers, in order: caching (free), abstaining without an LLM call (free), low
 - [0003: Exact-match answer cache before a semantic cache](docs/decisions/0003-exact-match-answer-cache.md)
 - [0004: Grounded answers with native citations; model defaults](docs/decisions/0004-grounding-citations-and-model-choice.md)
 - [0005: Retrieve 8 chunks instead of 4](docs/decisions/0005-retrieve-eight-chunks.md)
+- [0006: Daily spend cap that degrades gracefully](docs/decisions/0006-daily-spend-cap.md)
 
 ## Limitations
 
