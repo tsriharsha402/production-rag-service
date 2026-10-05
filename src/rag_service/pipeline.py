@@ -18,7 +18,7 @@ class RAGPipeline:
         provider: LLMProvider,
         cache: AnswerCache,
         corpus_version: str,
-        top_k: int = 4,
+        top_k: int = 8,
         min_retrieval_score: float = 1.0,
     ) -> None:
         self.index = index

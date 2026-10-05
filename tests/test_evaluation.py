@@ -25,3 +25,25 @@ def test_eval_run_produces_summary_and_report(pipeline):
     assert 0.0 <= summary["retrieval_mrr"] <= 1.0
     report = render_markdown(summary, results, "offline")
     assert "Retrieval hit@1" in report
+
+
+def test_context_recall_detects_right_document_wrong_section(pipeline):
+    from dataclasses import replace
+
+    pipeline.cache = NullCache()
+    case = next(c for c in load_cases(DATASET) if c.id == "incident-01")
+    # With 4 results the incident document is retrieved but not its "Severity levels" section.
+    pipeline.top_k = 4
+    narrow = run_case(pipeline, case)
+    assert "incident-response" in narrow.retrieved_docs
+    assert not narrow.context_has_answer
+    pipeline.top_k = 8
+    assert run_case(pipeline, replace(case)).context_has_answer
+    summary = summarize([narrow])
+    assert summary["retrieval_context_recall"] == 0.0
+
+
+def test_default_top_k_is_eight():
+    from rag_service.config import Settings
+
+    assert Settings().top_k == 8
