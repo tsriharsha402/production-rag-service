@@ -12,6 +12,6 @@
   "pass_rate": 0.6304,
   "total_cost_usd": 0.0,
   "avg_cost_per_question_usd": 0.0,
-  "latency_ms_p50": 0.3,
-  "latency_ms_p95": 0.5
+  "latency_ms_p50": 0.2,
+  "latency_ms_p95": 0.2
 }
