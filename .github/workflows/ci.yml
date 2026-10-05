@@ -28,6 +28,7 @@ jobs:
           --min-hit-at-k 0.90
           --min-keyword-recall 0.55
           --min-abstention-accuracy 0.60
+          --min-context-recall 0.90
       - name: Publish eval report
         if: always()
         run: cat evals/results/offline.md >> "$GITHUB_STEP_SUMMARY"
