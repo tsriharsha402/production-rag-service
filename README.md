@@ -14,7 +14,7 @@ gates every change in CI, caching, rate limiting and per-request cost tracking.
 |---|---|
 | **Problem** | Employees lose time searching policy docs, and generic chatbots answer confidently from outside knowledge, sometimes wrongly. |
 | **Solution** | A retrieval-augmented API that answers only from the company's documents, cites the exact supporting text, and says "I don't know" when the documents don't cover a question. |
-| **Quality** | 46-question evaluation set runs in CI on every change. Retrieval finds the right document for 95% of answerable questions (see [Evaluation](#evaluation)). |
+| **Quality** | 46-question evaluation set runs in CI on every change. With Claude, 84.8% of questions pass and it never answered a question the documents can't answer (see [Evaluation](#evaluation)). |
 | **Cost control** | Cost is tracked per request. Repeated questions are served from cache for $0, and questions with no relevant documents are answered without calling the model. |
 | **Risk control** | Verifiable citations, explicit abstention, rate limiting per client, no secrets in code, refusal fallback, decision records for every major tradeoff. |
 
@@ -141,26 +141,40 @@ a deliberately simple extractive baseline, not the product's quality. CI fails t
 if retrieval hit@k drops below 90%, keyword recall below 55% or abstention accuracy below
 60%, so a regression in chunking or retrieval can't merge silently.
 
-**With Claude:** run `make eval-live` (needs `ANTHROPIC_API_KEY`, roughly $1 for the full
-set). It writes the same report to `evals/results/claude-opus-5-5.md`. Those results aren't
-published yet.
+**With Claude** (`claude-opus-5-5`, effort medium; measured 2026-10-05 with `make eval-live`;
+full report in [`evals/results/claude-opus-5-5.md`](evals/results/claude-opus-5-5.md)):
+
+| Pass rate | Keyword recall | Citation accuracy | False abstention | Abstention accuracy | Cost per question | Latency p50 / p95 |
+|---|---|---|---|---|---|---|
+| 84.8% | 82.9% | 82.9% | 17.1% | 100.0% | $0.0093 | 3.2s / 6.3s |
+
+The full run cost $0.43. Claude never invented an answer: it abstained on all 5 unanswerable
+questions. All 7 failures are "I don't know" answers to answerable questions, and in every
+one the required fact was not in the retrieved chunks. Retrieval found the right *document*
+but the wrong *section* (6 cases) or nothing above the score threshold (1 case). The
+doc-level hit@k of 95.1% overstates retrieval: only 82.9% of answerable questions get the
+chunk that contains the answer. Retrieval, not the model, is the bottleneck.
 
 ## Cost model
 
 Cost is computed per request from the token usage the API returns
 ([`pricing.py`](src/rag_service/pricing.py)) and aggregated at `/v1/metrics`.
 
-An illustrative estimate for `claude-opus-5-5` ($4 input / $20 output per million tokens),
-to be replaced with measured numbers from `make eval-live`:
+Measured for `claude-opus-5-5` at effort medium ($4 input / $20 output per million tokens).
+Token averages come from the same request in
+[llm-model-selection](https://github.com/tsriharsha402/llm-model-selection) (run 2026-10-05);
+the cost per question is from `make eval-live`:
 
-| Assumption | Value |
+| Measure | Value |
 |---|---|
-| Input per question (system prompt + ~4 chunks + question) | ~450 tokens → $0.002 |
-| Output per question (answer + reasoning) | ~500 tokens → $0.010 |
-| **Cost per uncached question** | **~$0.012** |
-| 1,000 questions/day at a 30% cache hit rate | ~$8/day, ~$250/month |
+| Input per question (system prompt + 4 search results + question) | ~1,490 tokens → $0.0060 |
+| Output per question (answer + reasoning) | ~180 tokens → $0.0036 |
+| **Cost per uncached question** (measured, 46 questions) | **$0.0093** |
+| 1,000 questions/day at a 30% cache hit rate | ~$6.50/day, ~$200/month |
 
-Output tokens dominate the cost, so the first quality-trading lever is `LLM_EFFORT`.
+Input tokens are about 60% of the cost, so the cheapest levers are fewer or shorter chunks
+per request and prompt caching for the fixed system prompt. Lowering `LLM_EFFORT` saves less
+than expected: effort low cost 5% less than medium in the model-selection run.
 Whether a cheaper configuration holds quality on this task is measured in the companion
 project [llm-model-selection](https://github.com/tsriharsha402/llm-model-selection).
 
@@ -188,7 +202,7 @@ The levers, in order: caching (free), abstaining without an LLM call (free), low
 
 ## Roadmap
 
-- [ ] Publish Claude evaluation results (`make eval-live`) next to the baseline
+- [x] Publish Claude evaluation results (`make eval-live`) next to the baseline
 - [ ] Hybrid retrieval: BM25 + embeddings in PostgreSQL/pgvector, kept only if hit@1 improves
 - [ ] OpenTelemetry tracing across retrieval and generation
 - [ ] Streaming responses for lower perceived latency
