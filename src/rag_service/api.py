@@ -9,6 +9,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -18,13 +19,19 @@ from rag_service.budget import BudgetExceeded, DailyBudget, InMemorySpendStore, 
 from rag_service.cache import AnswerCache, InMemoryCache, NullCache, RedisCache
 from rag_service.config import Settings
 from rag_service.documents import chunk_document, corpus_version, load_documents
+from rag_service.feedback import (
+    FeedbackStore,
+    LocalFeedbackStore,
+    RedisFeedbackStore,
+    answer_record,
+)
 from rag_service.llm import AnthropicProvider, LLMError, LLMProvider, OfflineProvider
 from rag_service.metrics import Metrics
 from rag_service.pipeline import RAGPipeline
 from rag_service.pricing import PRICES_PER_MTOK
 from rag_service.rate_limit import RateLimiter
 from rag_service.retrieval import BM25Index
-from rag_service.schemas import QueryRequest, QueryResponse
+from rag_service.schemas import FeedbackRequest, FeedbackResponse, QueryRequest, QueryResponse
 
 logger = logging.getLogger("rag_service")
 
@@ -67,6 +74,12 @@ def build_cache(settings: Settings) -> AnswerCache:
     if settings.cache_backend == "memory":
         return InMemoryCache(settings.cache_ttl_seconds)
     return NullCache()
+
+
+def build_feedback_store(settings: Settings) -> FeedbackStore:
+    if settings.cache_backend == "redis":
+        return RedisFeedbackStore.from_url(settings.redis_url, settings.feedback_window_seconds)
+    return LocalFeedbackStore(settings.feedback_path, settings.feedback_window_seconds)
 
 
 def build_budget(settings: Settings, provider: LLMProvider) -> DailyBudget | None:
@@ -113,11 +126,18 @@ def build_pipeline(settings: Settings, provider: LLMProvider | None = None) -> R
     )
 
 
-def create_app(settings: Settings | None = None, pipeline: RAGPipeline | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    pipeline: RAGPipeline | None = None,
+    feedback_store: FeedbackStore | None = None,
+) -> FastAPI:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     settings = settings or Settings.from_env()
     pipeline = pipeline or build_pipeline(settings)
+    feedback_store = feedback_store or build_feedback_store(settings)
     limiter = RateLimiter(settings.rate_limit_per_minute)
+    # Separate bucket, so rating answers never eats into a client's question quota.
+    feedback_limiter = RateLimiter(settings.rate_limit_per_minute)
     metrics = Metrics()
 
     app = FastAPI(
@@ -217,6 +237,9 @@ def create_app(settings: Settings | None = None, pipeline: RAGPipeline | None = 
                 else "The answer service failed to process this request.",
             ) from exc
 
+        feedback_store.remember(
+            answer_record(result, body.question, request.state.request_id, pipeline.cache_namespace)
+        )
         metrics.record_answer(
             latency_ms=result.usage.latency_ms,
             cached=result.cached,
@@ -230,6 +253,7 @@ def create_app(settings: Settings | None = None, pipeline: RAGPipeline | None = 
                 {
                     "event": "answer",
                     "request_id": request.state.request_id,
+                    "answer_id": result.answer_id,
                     "model": result.usage.model,
                     "cached": result.cached,
                     "abstained": result.abstained,
@@ -242,5 +266,44 @@ def create_app(settings: Settings | None = None, pipeline: RAGPipeline | None = 
             )
         )
         return result
+
+    @app.post("/v1/feedback", response_model=FeedbackResponse, status_code=201)
+    def feedback(body: FeedbackRequest, request: Request):
+        allowed, retry_after = feedback_limiter.check(
+            client_ip(request, settings.trusted_proxy_hops)
+        )
+        if not allowed:
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Rate limit exceeded. Slow down and retry."},
+                headers={"Retry-After": str(max(1, round(retry_after)))},
+            )
+        record = feedback_store.lookup(body.answer_id)
+        if record is None:
+            # Unknown or past the rating window. The record is never taken from the client,
+            # so stored feedback always reflects what the service actually answered.
+            raise HTTPException(status_code=404, detail="Unknown or expired answer_id.")
+        feedback_store.add(
+            {
+                **record,
+                "rating": body.rating,
+                "comment": body.comment,
+                "feedback_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "feedback_request_id": request.state.request_id,
+            }
+        )
+        metrics.record_feedback(body.answer_id, body.rating)
+        logger.info(
+            json.dumps(
+                {
+                    "event": "feedback",
+                    "request_id": request.state.request_id,
+                    "answer_id": body.answer_id,
+                    "rating": body.rating,
+                    "has_comment": bool(body.comment),
+                }
+            )
+        )
+        return FeedbackResponse()
 
     return app
