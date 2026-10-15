@@ -17,7 +17,7 @@ gates every change in CI, caching, rate limiting and per-request cost tracking.
 | **Quality** | 46-question evaluation set runs in CI on every change. With Claude, 84.8% of questions pass and it never answered a question the documents can't answer (see [Evaluation](#evaluation)). |
 | **Cost control** | Cost is tracked per request, and a daily spend cap stops new paid answers once the day's budget is used. Repeated questions are served from cache for $0, and questions with no relevant documents are answered without calling the model. |
 | **Improvement loop** | Users rate answers with a thumbs up or down. Thumbs-down answers become draft eval cases that a reviewer labels and promotes into the CI gate, so the eval set grows from real failures (see [Feedback loop](#feedback-loop)). |
-| **Risk control** | Verifiable citations, explicit abstention, rate limiting per client, no secrets in code, refusal fallback, decision records for every major tradeoff. |
+| **Risk control** | Verifiable citations, explicit abstention, rate limiting per client, no secrets in code, refusal fallback, decision records for every major tradeoff. Prometheus alerts on errors, latency, spend and thumbs-down rate, unit-tested in CI. |
 
 ![Handbook Assistant UI](docs/images/ui.png)
 <sub>The Streamlit UI running in offline mode (no API key): answer with citation and source quote, thumbs up/down feedback, and live service metrics including thumbs-down rate.</sub>
@@ -36,7 +36,7 @@ flowchart LR
     RET -->|top-k chunks| LLM[Claude with search-result citations]
     LLM --> OUT
     ABS --> OUT
-    OUT --> M[Metrics: latency, cost, cache hit rate]
+    OUT --> M[Prometheus metrics → Grafana, alerts]
     OUT -.->|answer_id| FB[POST /v1/feedback]
     FB -.->|thumbs down, human review| EV[Eval set gating CI]
 ```
@@ -50,7 +50,7 @@ flowchart LR
 | Cache | In-memory LRU+TTL, or Redis | Invalidated automatically when documents, the prompt, or model or retrieval settings change ([ADR 0003](docs/decisions/0003-exact-match-answer-cache.md)) |
 | Rate limiting | Token bucket per client IP, proxy-aware; ignores client-supplied identity headers | Protects the API budget from runaway clients |
 | Spend cap | Daily USD budget across all clients, shared via Redis across replicas ([ADR 0006](docs/decisions/0006-daily-spend-cap.md)) | Bounds the worst-case bill, even from many clients at once; cached answers keep working when it's reached |
-| Observability | Structured JSON logs, request IDs, `/v1/metrics` | p50/p95 latency, spend, cache hit rate, abstentions, thumbs-down rate |
+| Observability | Prometheus `/metrics`, a provisioned Grafana dashboard, alert rules with unit tests in CI, structured JSON logs with request IDs ([ADR 0008](docs/decisions/0008-prometheus-metrics-dashboard-alerts.md)) | Metrics add up across workers and replicas and survive restarts; alerts on errors, latency, budget and thumbs-down rate |
 | Feedback | Thumbs up/down per `answer_id`, stored server-side; thumbs-down → reviewed eval cases ([ADR 0007](docs/decisions/0007-feedback-loop-into-evals.md)) | The eval set learns from production instead of only from what the team thought to ask |
 
 ## Quickstart
@@ -74,12 +74,15 @@ set -a && source .env && set +a
 make run
 ```
 
-**3. Docker (API + UI + Redis)**
+**3. Docker (API + UI + Redis + Prometheus + Grafana)**
 
 ```bash
 cp .env.example .env      # optional: add ANTHROPIC_API_KEY
 docker compose up --build
 ```
+
+UI on http://localhost:8501, Grafana with the service dashboard on http://localhost:3000,
+Prometheus with the alert rules on http://localhost:9090.
 
 ## API
 
@@ -118,7 +121,8 @@ curl -s localhost:8000/v1/query \
 |---|---|
 | `POST /v1/query` | Answer a question. Returns 429 with `Retry-After` when rate limited, 503 when the model API is unavailable, and 503 with `Retry-After` (seconds to midnight UTC) when the daily budget is used up. |
 | `POST /v1/feedback` | Rate an answer: `{"answer_id": "...", "rating": "up" \| "down", "comment": "optional"}`. Returns 201, or 404 if the id is unknown or older than the rating window (7 days). The latest vote per answer counts. |
-| `GET /v1/metrics` | Requests, cache hit rate, abstentions, errors, budget rejections, p50/p95 latency, tokens, total and average cost, spend today and budget remaining, thumbs up/down and thumbs-down rate |
+| `GET /metrics` | Prometheus exposition: answers, latency histogram, tokens and cost by model, errors, refusals, feedback votes, today's spend, and what is deployed. See [Observability](#observability). |
+| `GET /v1/metrics` | Requests, cache hit rate, abstentions, errors, budget rejections, p50/p95 latency, tokens, total and average cost, spend today and budget remaining, thumbs up/down and thumbs-down rate. Per process and reset on restart: a quick look for the UI. Use `/metrics` for anything else. |
 | `GET /healthz` | Provider, model, number of indexed chunks, corpus version, cache namespace |
 
 ## Evaluation
@@ -199,6 +203,34 @@ Candidates are never promoted automatically. A thumbs down says something went w
 what right looks like, and a user who dislikes a correct "I don't know" shouldn't teach the
 CI gate to reward guessing.
 
+## Observability
+
+`docker compose up` starts Prometheus and a provisioned Grafana dashboard
+([`deploy/`](deploy/)) next to the service. The dashboard answers four questions:
+
+| Row | Panels |
+|---|---|
+| Is it healthy? | answers/min, uncached p95 latency, model error rate, cache hit rate, budget used today, thumbs-down rate (24 h) |
+| Traffic and latency | answers by outcome (model, cache, abstained); p50/p95 latency, cached vs. uncached |
+| Cost | spend per hour by model, cost per model-answered question, tokens/min |
+| Quality and protection | net thumbs up/down per hour; rate-limit, budget and model-error refusals; what is deployed, per replica |
+
+Alert rules ([`deploy/prometheus/alerts.yml`](deploy/prometheus/alerts.yml)) page on
+replicas down, more than 5% of model calls failing, questions refused for budget, or an
+unreadable spend store. They warn on uncached p95 above 10 s, 80% of the budget spent, or a
+thumbs-down rate above 30% over 6 h (only with at least 20 votes, so a handful of votes
+can't page anyone). CI runs `promtool test rules` on them, including cases that must stay
+quiet, and a test fails if the dashboard or alerts use a metric the service doesn't export.
+
+**Several workers per container:** start uvicorn with an empty multiprocess directory, and
+use Redis so the cache, spend total and feedback records are shared too:
+
+```bash
+rm -rf /tmp/prom && mkdir /tmp/prom
+PROMETHEUS_MULTIPROC_DIR=/tmp/prom CACHE_BACKEND=redis \
+  uvicorn rag_service.api:create_app --factory --workers 4
+```
+
 ## Cost model
 
 Cost is computed per request from the token usage the API returns
@@ -236,6 +268,7 @@ daily bill is bounded, and an 80% warning is logged before the cap is hit.
 - [0005: Retrieve 8 chunks instead of 4](docs/decisions/0005-retrieve-eight-chunks.md)
 - [0006: Daily spend cap that degrades gracefully](docs/decisions/0006-daily-spend-cap.md)
 - [0007: User feedback feeds the evaluation set, through human review](docs/decisions/0007-feedback-loop-into-evals.md)
+- [0008: Prometheus metrics, a Grafana dashboard and tested alert rules](docs/decisions/0008-prometheus-metrics-dashboard-alerts.md)
 
 ## Limitations
 
@@ -245,8 +278,12 @@ daily bill is bounded, and an 80% warning is logged before the cap is hit.
 - **No authentication.** Rate limiting is per client IP address (set `TRUSTED_PROXY_HOPS`
   when running behind a load balancer). Put it behind an API gateway or SSO before
   exposing it, and rate-limit on the authenticated user instead.
-- **In-process metrics** reset on restart and are per replica. Production would export
-  them to Prometheus or OpenTelemetry.
+- **In-memory state is per process.** The default answer cache, spend total and feedback
+  records live in each process. With several workers or replicas, set `CACHE_BACKEND=redis`
+  (the service logs a warning in multiprocess mode without it). Prometheus metrics add up
+  correctly either way.
+- **No tracing.** Metrics show that latency rose, not whether retrieval or the model
+  caused it.
 - **Feedback is user data.** It holds users' questions and comments, isn't exposed over
   the API, and needs a retention policy before real use. The file backend is single-node;
   use `CACHE_BACKEND=redis` for several replicas.
@@ -257,6 +294,7 @@ daily bill is bounded, and an 80% warning is logged before the cap is hit.
 
 - [x] Publish Claude evaluation results (`make eval-live`) next to the baseline
 - [x] User feedback that feeds the evaluation set, through human review
+- [x] Prometheus metrics, Grafana dashboard and alert rules tested in CI
 - [ ] Hybrid retrieval: BM25 + embeddings in PostgreSQL/pgvector, kept only if hit@1 improves
 - [ ] OpenTelemetry tracing across retrieval and generation
 - [ ] Streaming responses for lower perceived latency
@@ -268,7 +306,7 @@ daily bill is bounded, and an 80% warning is logged before the cap is hit.
 | Role | First 90 days |
 |---|---|
 | **Retrieval engineer** | Hybrid retrieval on pgvector, grow the evaluation set to 300+ questions from real (anonymized) user queries |
-| **Platform engineer** | Auth via SSO, OpenTelemetry, Prometheus dashboards and alerting, autoscaling |
+| **Platform engineer** | Auth via SSO, OpenTelemetry tracing, alert routing and on-call runbooks, autoscaling |
 | **Full-stack engineer** | Chat UI with conversation history, a review queue for feedback candidates instead of editing JSONL |
 | **Applied AI engineer** | LLM-graded evaluations, model and effort tuning for cost, prompt-injection testing |
 
@@ -287,13 +325,14 @@ src/rag_service/
   llm.py          Claude provider and offline baseline
   cache.py        in-memory and Redis answer caches
   rate_limit.py   per-client token bucket
-  metrics.py      latency, cost, cache and feedback metrics
+  metrics.py      Prometheus metrics (multiprocess-aware) and the in-process snapshot
   feedback.py     answer records and thumbs up/down storage (file or Redis)
   pricing.py      per-model token prices
   evaluation.py   evaluation metrics and report
 evals/            dataset, runner, feedback-to-eval script, published results
 ui/               Streamlit front end
 data/handbook/    sample corpus (fictional company handbook)
+deploy/           Prometheus config and alert rules (with tests), Grafana dashboard
 docs/decisions/   architecture decision records
 tests/            unit and API tests (no API key needed)
 ```

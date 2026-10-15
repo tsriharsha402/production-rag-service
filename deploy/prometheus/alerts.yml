@@ -1,0 +1,77 @@
+# Alert rules for the RAG service. Unit tests: alerts_test.yml (promtool test rules).
+# Every replica reports the same shared budget, so budget rules use max(), not sum().
+groups:
+  - name: rag-service
+    rules:
+      - alert: RagServiceDown
+        expr: up{job="rag-service"} == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: A RAG service replica is down or not serving /metrics.
+          description: Prometheus could not scrape it for 2 minutes. Check the container logs.
+
+      - alert: RagHighErrorRate
+        expr: |
+          sum(rate(rag_llm_errors_total[5m]))
+            / (sum(rate(rag_answers_total{cached="false"}[5m])) + sum(rate(rag_llm_errors_total[5m])))
+            > 0.05
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: More than 5% of model calls are failing.
+          description: Users get 502/503 instead of answers. Check the provider status page and the llm_error log events.
+
+      - alert: RagSlowAnswers
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(rag_answer_latency_seconds_bucket{cached="false"}[10m])))
+            > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: p95 latency for uncached answers is above 10 seconds.
+          description: Check the model provider latency, the effort setting and how many chunks are sent per question.
+
+      - alert: RagBudgetNearlySpent
+        expr: max(rag_budget_spent_today_usd) / max(rag_budget_limit_usd) > 0.8
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 80% of today's model budget is spent.
+          description: New questions will be refused once the cap is reached. Raise DAILY_BUDGET_USD deliberately or find what is driving spend.
+
+      - alert: RagBudgetExhausted
+        expr: sum(increase(rag_budget_rejections_total[10m])) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: The daily model budget is used up and questions are being refused.
+          description: Cached answers still work. New answers resume at 00:00 UTC unless the budget is raised.
+
+      - alert: RagBudgetStoreDown
+        expr: min(rag_budget_store_up) == 0
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: The spend store (Redis) can't be read.
+          description: The spend cap fails closed, so paid answers are failing. Check Redis.
+
+      - alert: RagThumbsDownRateHigh
+        # Net votes (votes - retracted), and only with enough of them to mean something.
+        expr: |
+          (
+            (sum(increase(rag_feedback_votes_total{rating="down"}[6h])) - sum(increase(rag_feedback_retracted_total{rating="down"}[6h])))
+            / (sum(increase(rag_feedback_votes_total[6h])) - sum(increase(rag_feedback_retracted_total[6h])))
+            > 0.3
+          )
+          and
+          (sum(increase(rag_feedback_votes_total[6h])) - sum(increase(rag_feedback_retracted_total[6h])) >= 20)
+        labels:
+          severity: warning
+        annotations:
+          summary: More than 30% of rated answers in the last 6 hours got a thumbs down.
+          description: Run make feedback-draft to see which questions, and compare against the last release (rag_service_info).

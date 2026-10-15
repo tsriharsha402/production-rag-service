@@ -1,0 +1,152 @@
+# promtool test rules deploy/prometheus/alerts_test.yml  (runs in CI)
+rule_files:
+  - alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: error rate above 5% pages after 5 minutes
+    interval: 1m
+    input_series:
+      - series: 'rag_answers_total{cached="false", abstained="false"}'
+        values: '0+60x20'   # 1 answer/s
+      - series: 'rag_llm_errors_total{retryable="true"}'
+        values: '0+6x20'    # 0.1 errors/s: 9% of calls
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: RagHighErrorRate
+        exp_alerts: []      # pending, not firing yet
+      - eval_time: 15m
+        alertname: RagHighErrorRate
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: More than 5% of model calls are failing.
+              description: Users get 502/503 instead of answers. Check the provider status page and the llm_error log events.
+
+  - name: error rate below 5% stays quiet
+    interval: 1m
+    input_series:
+      - series: 'rag_answers_total{cached="false", abstained="false"}'
+        values: '0+60x20'
+      - series: 'rag_llm_errors_total{retryable="true"}'
+        values: '0+1x20'    # under 2%
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: RagHighErrorRate
+        exp_alerts: []
+
+  - name: budget uses the shared total once, not once per replica
+    interval: 1m
+    input_series:
+      # Two replicas each report the same shared spend: 8.5 of 10 is 85%, not 170%.
+      - series: 'rag_budget_spent_today_usd{instance="api-1"}'
+        values: '8.5x5'
+      - series: 'rag_budget_spent_today_usd{instance="api-2"}'
+        values: '8.5x5'
+      - series: 'rag_budget_limit_usd{instance="api-1"}'
+        values: '10x5'
+      - series: 'rag_budget_limit_usd{instance="api-2"}'
+        values: '10x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: RagBudgetNearlySpent
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: More than 80% of today's model budget is spent.
+              description: New questions will be refused once the cap is reached. Raise DAILY_BUDGET_USD deliberately or find what is driving spend.
+
+  - name: refused questions page immediately
+    interval: 1m
+    input_series:
+      - series: 'rag_budget_rejections_total'
+        values: '0 0 0 3 7'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: RagBudgetExhausted
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: RagBudgetExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: The daily model budget is used up and questions are being refused.
+              description: Cached answers still work. New answers resume at 00:00 UTC unless the budget is raised.
+
+  - name: thumbs-down rate alerts only with enough votes
+    interval: 10m
+    input_series:
+      # 40 votes in 6h, 16 of them down (40%).
+      - series: 'rag_feedback_votes_total{rating="down"}'
+        values: '0+0.5x36'
+      - series: 'rag_feedback_votes_total{rating="up"}'
+        values: '0+0.75x36'
+      - series: 'rag_feedback_retracted_total{rating="down"}'
+        values: '0x36'
+      - series: 'rag_feedback_retracted_total{rating="up"}'
+        values: '0x36'
+    alert_rule_test:
+      - eval_time: 6h
+        alertname: RagThumbsDownRateHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: More than 30% of rated answers in the last 6 hours got a thumbs down.
+              description: Run make feedback-draft to see which questions, and compare against the last release (rag_service_info).
+
+  - name: a high thumbs-down rate on a handful of votes is noise
+    interval: 10m
+    input_series:
+      # 3 of 4 votes down (75%), but only 4 votes.
+      - series: 'rag_feedback_votes_total{rating="down"}'
+        values: '0 1 2 3x33'
+      - series: 'rag_feedback_votes_total{rating="up"}'
+        values: '0 1x35'
+      - series: 'rag_feedback_retracted_total{rating="down"}'
+        values: '0x36'
+      - series: 'rag_feedback_retracted_total{rating="up"}'
+        values: '0x36'
+    alert_rule_test:
+      - eval_time: 6h
+        alertname: RagThumbsDownRateHigh
+        exp_alerts: []
+
+  - name: changed votes are not counted twice
+    interval: 10m
+    input_series:
+      # 40 answers rated down, then 30 of them changed to up. Raw votes: 40 down of 70 (57%),
+      # which would fire. Net: 10 down of 40 (25%), which must not.
+      - series: 'rag_feedback_votes_total{rating="down"}'
+        values: '0+2x20 40x15'
+      - series: 'rag_feedback_votes_total{rating="up"}'
+        values: '0x20 2+2x14 30'
+      - series: 'rag_feedback_retracted_total{rating="down"}'
+        values: '0x20 2+2x14 30'
+      - series: 'rag_feedback_retracted_total{rating="up"}'
+        values: '0x36'
+    alert_rule_test:
+      - eval_time: 6h
+        alertname: RagThumbsDownRateHigh
+        exp_alerts: []
+
+  - name: unreadable spend store pages after 5 minutes
+    interval: 1m
+    input_series:
+      - series: 'rag_budget_store_up{instance="api-1"}'
+        values: '1 0x10'
+      - series: 'rag_budget_store_up{instance="api-2"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: RagBudgetStoreDown
+        exp_alerts:
+          - exp_labels:
+              severity: page
+            exp_annotations:
+              summary: The spend store (Redis) can't be read.
+              description: The spend cap fails closed, so paid answers are failing. Check Redis.

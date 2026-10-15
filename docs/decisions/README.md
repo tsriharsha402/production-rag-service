@@ -12,3 +12,4 @@ costs, and what evidence would make us revisit it.
 | [0005](0005-retrieve-eight-chunks.md) | Retrieve 8 chunks instead of 4 | Accepted |
 | [0006](0006-daily-spend-cap.md) | Daily spend cap that degrades gracefully | Accepted |
 | [0007](0007-feedback-loop-into-evals.md) | User feedback feeds the evaluation set, through human review | Accepted |
+| [0008](0008-prometheus-metrics-dashboard-alerts.md) | Prometheus metrics, a Grafana dashboard and tested alert rules | Accepted |

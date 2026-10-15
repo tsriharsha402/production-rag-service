@@ -44,6 +44,10 @@ class FeedbackStore(Protocol):
 
     def lookup(self, answer_id: str) -> dict[str, Any] | None: ...
 
+    def set_rating(self, answer_id: str, rating: str) -> str | None:
+        """Store the answer's latest rating and return the previous one, if any."""
+        ...
+
     def add(self, entry: dict[str, Any]) -> None: ...
 
     def entries(self) -> list[dict[str, Any]]: ...
@@ -88,6 +92,15 @@ class LocalFeedbackStore:
                 return None
             return record
 
+    def set_rating(self, answer_id: str, rating: str) -> str | None:
+        with self._lock:
+            entry = self._answers.get(answer_id)
+            if entry is None:
+                return None
+            previous = entry[1].get("rating")
+            entry[1]["rating"] = rating
+            return previous
+
     def add(self, entry: dict[str, Any]) -> None:
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +134,19 @@ class RedisFeedbackStore:
     def lookup(self, answer_id: str) -> dict[str, Any] | None:
         raw = self._client.get(self.ANSWER_PREFIX + answer_id)
         return json.loads(raw) if raw else None
+
+    def set_rating(self, answer_id: str, rating: str) -> str | None:
+        # Read-modify-write: two votes on the same answer in the same instant could both see
+        # the old rating, which at worst miscounts one vote in metrics. Feedback itself is
+        # appended separately and unaffected.
+        key = self.ANSWER_PREFIX + answer_id
+        record = self.lookup(answer_id)
+        if record is None:
+            return None
+        previous = record.get("rating")
+        record["rating"] = rating
+        self._client.set(key, json.dumps(record), keepttl=True)  # keep the rating window
+        return previous
 
     def add(self, entry: dict[str, Any]) -> None:
         self._client.rpush(self.FEEDBACK_KEY, json.dumps(entry))

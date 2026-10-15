@@ -7,12 +7,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 import uuid
 from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from rag_service import __version__
 from rag_service.budget import BudgetExceeded, DailyBudget, InMemorySpendStore, RedisSpendStore
@@ -26,7 +28,7 @@ from rag_service.feedback import (
     answer_record,
 )
 from rag_service.llm import AnthropicProvider, LLMError, LLMProvider, OfflineProvider
-from rag_service.metrics import Metrics
+from rag_service.metrics import Metrics, exposition_registry
 from rag_service.pipeline import RAGPipeline
 from rag_service.pricing import PRICES_PER_MTOK
 from rag_service.rate_limit import RateLimiter
@@ -135,10 +137,23 @@ def create_app(
     settings = settings or Settings.from_env()
     pipeline = pipeline or build_pipeline(settings)
     feedback_store = feedback_store or build_feedback_store(settings)
+    if os.environ.get("PROMETHEUS_MULTIPROC_DIR") and settings.cache_backend != "redis":
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "per_process_state",
+                    "detail": "Several workers with in-memory state: each worker has its own "
+                    "answer cache, spend total and record of answers to rate, so the spend "
+                    "cap multiplies and votes can 404. Set CACHE_BACKEND=redis.",
+                }
+            )
+        )
     limiter = RateLimiter(settings.rate_limit_per_minute)
     # Separate bucket, so rating answers never eats into a client's question quota.
     feedback_limiter = RateLimiter(settings.rate_limit_per_minute)
     metrics = Metrics()
+    metrics.init_model(pipeline.provider.model)
+    prometheus_registry = exposition_registry(metrics, pipeline, __version__)
 
     app = FastAPI(
         title="Production RAG Service",
@@ -179,6 +194,10 @@ def create_app(
             "cache_namespace": pipeline.cache_namespace,
         }
 
+    @app.get("/metrics", include_in_schema=False)
+    def prometheus_metrics() -> Response:
+        return Response(generate_latest(prometheus_registry), media_type=CONTENT_TYPE_LATEST)
+
     @app.get("/v1/metrics")
     def get_metrics() -> dict:
         snapshot = metrics.snapshot()
@@ -190,7 +209,7 @@ def create_app(
     def query(body: QueryRequest, request: Request):
         allowed, retry_after = limiter.check(client_ip(request, settings.trusted_proxy_hops))
         if not allowed:
-            metrics.record_rate_limited()
+            metrics.record_rate_limited("query")
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded. Slow down and retry."},
@@ -219,7 +238,7 @@ def create_app(
                 headers={"Retry-After": str(exc.retry_after_seconds)},
             )
         except LLMError as exc:
-            metrics.record_error()
+            metrics.record_error(exc.retryable)
             logger.warning(
                 json.dumps(
                     {
@@ -247,6 +266,7 @@ def create_app(
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
             cost_usd=result.usage.cost_usd,
+            model=result.usage.model,
         )
         logger.info(
             json.dumps(
@@ -273,6 +293,7 @@ def create_app(
             client_ip(request, settings.trusted_proxy_hops)
         )
         if not allowed:
+            metrics.record_rate_limited("feedback")
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded. Slow down and retry."},
@@ -292,7 +313,9 @@ def create_app(
                 "feedback_request_id": request.state.request_id,
             }
         )
-        metrics.record_feedback(body.answer_id, body.rating)
+        # The previous rating comes from the shared store, so a vote changed on another
+        # replica or worker still moves the count instead of adding to it.
+        metrics.record_feedback(body.rating, feedback_store.set_rating(body.answer_id, body.rating))
         logger.info(
             json.dumps(
                 {
