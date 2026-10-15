@@ -42,6 +42,12 @@ class Settings:
     # clients connect directly and X-Forwarded-For is ignored, since clients can forge it.
     trusted_proxy_hops: int = 0
 
+    # Thumbs up/down on answers. With CACHE_BACKEND=redis feedback is stored in Redis and
+    # shared across replicas; otherwise it is appended to this JSONL file.
+    feedback_path: Path = Path("var/feedback.jsonl")
+    # How long an answer can still be rated after it was served.
+    feedback_window_seconds: int = 7 * 24 * 3600
+
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
@@ -61,6 +67,10 @@ class Settings:
             ),
             trusted_proxy_hops=int(_env("TRUSTED_PROXY_HOPS", str(cls.trusted_proxy_hops))),
             daily_budget_usd=float(_env("DAILY_BUDGET_USD", str(cls.daily_budget_usd))),
+            feedback_path=Path(_env("FEEDBACK_PATH", str(cls.feedback_path))),
+            feedback_window_seconds=int(
+                _env("FEEDBACK_WINDOW_SECONDS", str(cls.feedback_window_seconds))
+            ),
         )
 
     def resolved_provider(self) -> str:

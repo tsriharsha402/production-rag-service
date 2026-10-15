@@ -43,6 +43,11 @@ jobs:
         run: |
           docker run -d --name api -p 8000:8000 -e LLM_PROVIDER=offline production-rag-service
           for i in $(seq 1 20); do curl -fs localhost:8000/healthz && break; sleep 1; done
-          curl -fs -X POST localhost:8000/v1/query \
+          answer_id=$(curl -fs -X POST localhost:8000/v1/query \
             -H 'content-type: application/json' \
-            -d '{"question": "When is the holiday change freeze?"}'
+            -d '{"question": "When is the holiday change freeze?"}' \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["answer_id"])')
+          # Feedback writes to disk as the non-root user: catches an unwritable data dir.
+          curl -fs -X POST localhost:8000/v1/feedback \
+            -H 'content-type: application/json' \
+            -d "{\"answer_id\": \"$answer_id\", \"rating\": \"up\"}"

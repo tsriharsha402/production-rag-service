@@ -1,4 +1,4 @@
-.PHONY: install test lint format eval eval-live run ui
+.PHONY: install test lint format eval eval-live feedback-draft feedback-promote run ui
 
 install:
 	pip install -e ".[dev,ui,redis]"
@@ -21,6 +21,14 @@ eval:
 # Claude. Needs ANTHROPIC_API_KEY and costs real money (roughly $1 for the full set).
 eval-live:
 	python evals/run_evals.py --provider anthropic
+
+# Thumbs-down feedback -> evals/candidates.jsonl for review (reads var/feedback.jsonl).
+feedback-draft:
+	python evals/feedback_to_eval.py draft
+
+# Reviewed candidates -> evals/dataset.jsonl.
+feedback-promote:
+	python evals/feedback_to_eval.py promote
 
 run:
 	uvicorn rag_service.api:create_app --factory --reload

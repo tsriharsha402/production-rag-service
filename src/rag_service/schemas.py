@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -36,9 +38,25 @@ class Usage(BaseModel):
 
 
 class QueryResponse(BaseModel):
+    answer_id: str = Field(
+        default="",
+        description="Unique per response, cache hits included. Rate it via /v1/feedback.",
+    )
     answer: str
     abstained: bool
     cached: bool
     citations: list[Citation]
     retrieved: list[RetrievedChunk]
     usage: Usage
+
+
+class FeedbackRequest(BaseModel):
+    answer_id: str = Field(min_length=1, max_length=64)
+    rating: Literal["up", "down"]
+    comment: str | None = Field(
+        default=None, max_length=1000, examples=["It cited the old travel policy."]
+    )
+
+
+class FeedbackResponse(BaseModel):
+    status: Literal["recorded"] = "recorded"

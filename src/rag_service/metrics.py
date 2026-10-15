@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from collections import deque
+from collections import OrderedDict, deque
 from typing import Any
 
 
@@ -27,6 +27,12 @@ class Metrics:
         self.errors = 0
         self.rate_limited = 0
         self.budget_rejections = 0
+        self.feedback_up = 0
+        self.feedback_down = 0
+        # Latest rating per recently rated answer, so changing a vote or adding a comment
+        # moves the counts instead of double-counting.
+        self._ratings: OrderedDict[str, str] = OrderedDict()
+        self._max_ratings = window * 10
         self.input_tokens = 0
         self.output_tokens = 0
         self.cost_usd = 0.0
@@ -64,10 +70,28 @@ class Metrics:
         with self._lock:
             self.budget_rejections += 1
 
+    def record_feedback(self, answer_id: str, rating: str) -> None:
+        with self._lock:
+            previous = self._ratings.pop(answer_id, None)
+            self._ratings[answer_id] = rating
+            if len(self._ratings) > self._max_ratings:
+                self._ratings.popitem(last=False)
+            if previous == rating:
+                return
+            if previous == "up":
+                self.feedback_up -= 1
+            elif previous == "down":
+                self.feedback_down -= 1
+            if rating == "up":
+                self.feedback_up += 1
+            else:
+                self.feedback_down += 1
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             latencies = list(self._latencies)
             answered = max(self.requests, 1)
+            rated = self.feedback_up + self.feedback_down
             return {
                 "requests": self.requests,
                 "cache_hits": self.cache_hits,
@@ -76,6 +100,10 @@ class Metrics:
                 "errors": self.errors,
                 "rate_limited": self.rate_limited,
                 "budget_rejections": self.budget_rejections,
+                "feedback_up": self.feedback_up,
+                "feedback_down": self.feedback_down,
+                # Share of rated answers that got a thumbs down; None until anything is rated.
+                "thumbs_down_rate": round(self.feedback_down / rated, 4) if rated else None,
                 "latency_ms_p50": round(percentile(latencies, 50), 1),
                 "latency_ms_p95": round(percentile(latencies, 95), 1),
                 "input_tokens": self.input_tokens,
