@@ -47,10 +47,10 @@ reviewer a minute or two; a wrong label costs every future change.
   it needs access to the file or Redis. A real deployment needs a retention period and the
   same access controls as other user data. `var/` and `evals/candidates.jsonl` are
   git-ignored for the same reason.
-- The JSONL backend is single-node, and it keeps the record of served answers in memory:
+- The JSONL backend is single-process, and it keeps the record of served answers in memory:
   after a restart, answers served before it can no longer be rated (404). Votes already
-  recorded are on disk and kept. Running several replicas needs `CACHE_BACKEND=redis` or a
-  database.
+  recorded are on disk and kept. Several workers or replicas need `CACHE_BACKEND=redis` or
+  a database.
 - Promoted cases can lower the CI pass rate. That is the point: the gate thresholds should
   be revisited deliberately, not lowered to make a new real failure pass.
 
