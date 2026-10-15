@@ -9,12 +9,13 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
-def settings() -> Settings:
+def settings(tmp_path) -> Settings:
     return Settings(
         llm_provider="offline",
         corpus_dir=ROOT / "data" / "handbook",
         cache_backend="memory",
         rate_limit_per_minute=1000,
+        feedback_path=tmp_path / "feedback.jsonl",
     )
 
 

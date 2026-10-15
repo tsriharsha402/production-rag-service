@@ -36,8 +36,37 @@ st.write(
     "does not cover a question."
 )
 
-if "question" not in st.session_state:
-    st.session_state.question = ""
+
+def send_feedback(answer_id: str, comment: str | None = None) -> None:
+    choice = st.session_state.get(f"rating-{answer_id}")
+    if choice is None:  # the vote was cleared
+        return
+    rating = "up" if choice == 1 else "down"
+    payload = {"answer_id": answer_id, "rating": rating, "comment": comment or None}
+    response = fetch("POST", "/v1/feedback", json=payload)
+    if response is not None and response.ok:
+        st.session_state.feedback_sent[answer_id] = "comment" if comment else rating
+    elif response is not None:
+        st.session_state.feedback_sent[answer_id] = f"error {response.status_code}"
+
+
+def ask(question: str) -> tuple[dict | None, str | None]:
+    """The answer body, or a message saying why there isn't one."""
+    with st.spinner("Searching the handbook…"):
+        response = fetch("POST", "/v1/query", json={"question": question})
+    if response is None:
+        return None, None  # fetch already showed the connection error
+    if response.status_code == 429:
+        return None, f"Rate limited. Try again in {response.headers.get('retry-after', '?')}s."
+    if response.status_code == 503 and "budget" in response.text:
+        return None, response.json()["detail"]
+    if not response.ok:
+        return None, f"The API returned {response.status_code}: {response.text}"
+    return response.json(), None
+
+
+st.session_state.setdefault("question", "")
+st.session_state.setdefault("feedback_sent", {})
 
 cols = st.columns(len(SAMPLE_QUESTIONS))
 for col, sample in zip(cols, SAMPLE_QUESTIONS, strict=True):
@@ -46,22 +75,17 @@ for col, sample in zip(cols, SAMPLE_QUESTIONS, strict=True):
 
 question = st.text_input("Your question", key="question", placeholder="Ask anything…")
 
-if question:
-    with st.spinner("Searching the handbook…"):
-        response = fetch("POST", "/v1/query", json={"question": question})
-    body = None
-    if response is None:
-        pass
-    elif response.status_code == 429:
-        st.warning(f"Rate limited. Try again in {response.headers.get('retry-after', '?')}s.")
-    elif response.status_code == 503 and "budget" in response.text:
-        st.warning(response.json()["detail"])
-    elif not response.ok:
-        st.error(f"The API returned {response.status_code}: {response.text}")
-    else:
-        body = response.json()
+# Ask once per question and keep the result: clicking a feedback button reruns the script,
+# and re-asking would serve a new answer (with a new answer_id) instead of the one rated.
+if question and st.session_state.get("asked") != question:
+    st.session_state.asked = question
+    st.session_state.body, st.session_state.problem = ask(question)
 
-if question and body is not None:
+body = st.session_state.get("body") if question else None
+if question and st.session_state.get("problem"):
+    st.warning(st.session_state.problem)
+
+if body is not None:
     if body["abstained"]:
         st.warning(body["answer"])
     else:
@@ -74,6 +98,20 @@ if question and body is not None:
         f"{usage['input_tokens']} in / {usage['output_tokens']} out tokens · {cost} · "
         f"`{usage['model']}`"
     )
+
+    answer_id = body["answer_id"]
+    st.feedback("thumbs", key=f"rating-{answer_id}", on_change=send_feedback, args=(answer_id,))
+    sent = st.session_state.feedback_sent.get(answer_id)
+    if sent == "down":
+        with st.form(f"comment-{answer_id}", clear_on_submit=True, border=False):
+            comment = st.text_input("What was wrong? (optional)", max_chars=1000)
+            if st.form_submit_button("Send") and comment.strip():
+                send_feedback(answer_id, comment.strip())
+                st.rerun()
+    if sent in ("up", "down", "comment"):
+        st.caption("Thanks, your feedback was recorded.")
+    elif sent:
+        st.caption(f"Feedback wasn't recorded ({sent}).")
 
     if body["citations"]:
         st.subheader("Sources")
@@ -104,5 +142,8 @@ with st.sidebar:
         col2.metric("p95 latency", f"{m['latency_ms_p95']:.0f} ms")
         col1.metric("Abstentions", m["abstentions"])
         col2.metric("Errors", m["errors"])
+        col1.metric("👍 / 👎", f"{m['feedback_up']} / {m['feedback_down']}")
+        down_rate = m["thumbs_down_rate"]
+        col2.metric("Thumbs-down rate", "–" if down_rate is None else f"{down_rate:.0%}")
         st.metric("Total spend", f"${m['total_cost_usd']:.4f}")
         st.metric("Avg cost / request", f"${m['avg_cost_per_request_usd']:.5f}")

@@ -21,9 +21,12 @@ def cache_namespace(*parts: object) -> str:
     return hashlib.sha256("|".join(str(p) for p in parts).encode()).hexdigest()[:16]
 
 
+def normalize_question(question: str) -> str:
+    return " ".join(question.lower().split()).rstrip("?.! ")
+
+
 def cache_key(question: str, namespace: str) -> str:
-    normalized = " ".join(question.lower().split()).rstrip("?.! ")
-    raw = f"{namespace}|{normalized}"
+    raw = f"{namespace}|{normalize_question(question)}"
     return "rag:answer:" + hashlib.sha256(raw.encode()).hexdigest()[:32]
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 
 from rag_service.budget import DailyBudget
 from rag_service.cache import AnswerCache, cache_key, cache_namespace
@@ -44,11 +45,15 @@ class RAGPipeline:
 
     def answer(self, question: str) -> QueryResponse:
         started = time.perf_counter()
+        # Every response gets its own id, cache hits included: feedback rates what one user
+        # saw at one moment, not the cache entry.
+        answer_id = uuid.uuid4().hex
         key = cache_key(question, self.cache_namespace)
 
         cached = self.cache.get(key)
         if cached is not None:
             response = QueryResponse.model_validate(cached)
+            response.answer_id = answer_id
             response.cached = True
             response.usage.latency_ms = _elapsed_ms(started)
             return response
@@ -73,6 +78,7 @@ class RAGPipeline:
         if not hits:
             # Nothing relevant was retrieved: abstain without paying for an LLM call.
             response = QueryResponse(
+                answer_id=answer_id,
                 answer=ABSTAIN_MESSAGE,
                 abstained=True,
                 cached=False,
@@ -110,6 +116,7 @@ class RAGPipeline:
                     )
                 )
             response = QueryResponse(
+                answer_id=answer_id,
                 answer=generation.text,
                 abstained=generation.abstained,
                 cached=False,
