@@ -16,10 +16,11 @@ gates every change in CI, caching, rate limiting and per-request cost tracking.
 | **Solution** | A retrieval-augmented API that answers only from the company's documents, cites the exact supporting text, and says "I don't know" when the documents don't cover a question. |
 | **Quality** | 46-question evaluation set runs in CI on every change. With Claude, 84.8% of questions pass and it never answered a question the documents can't answer (see [Evaluation](#evaluation)). |
 | **Cost control** | Cost is tracked per request, and a daily spend cap stops new paid answers once the day's budget is used. Repeated questions are served from cache for $0, and questions with no relevant documents are answered without calling the model. |
+| **Improvement loop** | Users rate answers with a thumbs up or down. Thumbs-down answers become draft eval cases that a reviewer labels and promotes into the CI gate, so the eval set grows from real failures (see [Feedback loop](#feedback-loop)). |
 | **Risk control** | Verifiable citations, explicit abstention, rate limiting per client, no secrets in code, refusal fallback, decision records for every major tradeoff. |
 
 ![Handbook Assistant UI](docs/images/ui.png)
-<sub>The Streamlit UI running in offline mode (no API key): answer with citation, source quote and live service metrics.</sub>
+<sub>The Streamlit UI running in offline mode (no API key): answer with citation and source quote, thumbs up/down feedback, and live service metrics including thumbs-down rate.</sub>
 
 ## Architecture
 
@@ -36,6 +37,8 @@ flowchart LR
     LLM --> OUT
     ABS --> OUT
     OUT --> M[Metrics: latency, cost, cache hit rate]
+    OUT -.->|answer_id| FB[POST /v1/feedback]
+    FB -.->|thumbs down, human review| EV[Eval set gating CI]
 ```
 
 | Component | Choice | Why |
@@ -47,7 +50,8 @@ flowchart LR
 | Cache | In-memory LRU+TTL, or Redis | Invalidated automatically when documents, the prompt, or model or retrieval settings change ([ADR 0003](docs/decisions/0003-exact-match-answer-cache.md)) |
 | Rate limiting | Token bucket per client IP, proxy-aware; ignores client-supplied identity headers | Protects the API budget from runaway clients |
 | Spend cap | Daily USD budget across all clients, shared via Redis across replicas ([ADR 0006](docs/decisions/0006-daily-spend-cap.md)) | Bounds the worst-case bill, even from many clients at once; cached answers keep working when it's reached |
-| Observability | Structured JSON logs, request IDs, `/v1/metrics` | p50/p95 latency, spend, cache hit rate, abstentions |
+| Observability | Structured JSON logs, request IDs, `/v1/metrics` | p50/p95 latency, spend, cache hit rate, abstentions, thumbs-down rate |
+| Feedback | Thumbs up/down per `answer_id`, stored server-side; thumbs-down → reviewed eval cases ([ADR 0007](docs/decisions/0007-feedback-loop-into-evals.md)) | The eval set learns from production instead of only from what the team thought to ask |
 
 ## Quickstart
 
@@ -87,6 +91,7 @@ curl -s localhost:8000/v1/query \
 
 ```json
 {
+  "answer_id": "8877711113a34a41b990daf6477da9c0",
   "answer": "A company-wide change freeze runs from December 15 to January 5; during the freeze only approved hotfixes ship. [1]",
   "abstained": false,
   "cached": false,
@@ -112,7 +117,8 @@ curl -s localhost:8000/v1/query \
 | Endpoint | Purpose |
 |---|---|
 | `POST /v1/query` | Answer a question. Returns 429 with `Retry-After` when rate limited, 503 when the model API is unavailable, and 503 with `Retry-After` (seconds to midnight UTC) when the daily budget is used up. |
-| `GET /v1/metrics` | Requests, cache hit rate, abstentions, errors, budget rejections, p50/p95 latency, tokens, total and average cost, spend today and budget remaining |
+| `POST /v1/feedback` | Rate an answer: `{"answer_id": "...", "rating": "up" \| "down", "comment": "optional"}`. Returns 201, or 404 if the id is unknown or older than the rating window (7 days). The latest vote per answer counts. |
+| `GET /v1/metrics` | Requests, cache hit rate, abstentions, errors, budget rejections, p50/p95 latency, tokens, total and average cost, spend today and budget remaining, thumbs up/down and thumbs-down rate |
 | `GET /healthz` | Provider, model, number of indexed chunks, corpus version, cache namespace |
 
 ## Evaluation
@@ -165,6 +171,34 @@ share no vocabulary with their answers and need semantic search
 ([issue #2](https://github.com/tsriharsha402/production-rag-service/issues/2)). The Claude
 numbers above are from the 4-chunk run; a re-run with `make eval-live` is pending.
 
+### Feedback loop
+
+The eval set above was written by hand. Real users ask other questions, in other words,
+and those are the ones it misses. Feedback closes that gap
+([ADR 0007](docs/decisions/0007-feedback-loop-into-evals.md)):
+
+1. Every answer has an `answer_id`; the UI shows thumbs up/down and, after a thumbs down,
+   asks what was wrong.
+2. The API stores each vote with its own record of the question, answer and sources, so the
+   evidence can't be tampered with by the client.
+3. `make feedback-draft` turns thumbs-down votes into candidates in `evals/candidates.jsonl`:
+   grouped by question, skipping ones the dataset already covers, most complaints first,
+   each with a triage hint.
+4. A reviewer labels each candidate (`answerable`, `expected_doc`, `expected_keywords`), and
+   `make feedback-promote` validates the labels against the corpus and appends the cases to
+   `evals/dataset.jsonl`. From then on CI tests that question on every change.
+
+```json
+{"id": "fb-479605ad", "question": "Can I bring my dog to the office?", "answerable": null,
+ "expected_doc": null, "expected_keywords": [],
+ "review": {"thumbs_down": 1, "abstained": true, "retrieved_docs": ["expense-policy"],
+            "triage": "Abstained although documents were retrieved. If the answer is in them, generation was too cautious; if it's elsewhere in the handbook, retrieval missed it. If the handbook doesn't cover it, the abstention was right: set answerable=false."}}
+```
+
+Candidates are never promoted automatically. A thumbs down says something went wrong, not
+what right looks like, and a user who dislikes a correct "I don't know" shouldn't teach the
+CI gate to reward guessing.
+
 ## Cost model
 
 Cost is computed per request from the token usage the API returns
@@ -201,6 +235,7 @@ daily bill is bounded, and an 80% warning is logged before the cap is hit.
 - [0004: Grounded answers with native citations; model defaults](docs/decisions/0004-grounding-citations-and-model-choice.md)
 - [0005: Retrieve 8 chunks instead of 4](docs/decisions/0005-retrieve-eight-chunks.md)
 - [0006: Daily spend cap that degrades gracefully](docs/decisions/0006-daily-spend-cap.md)
+- [0007: User feedback feeds the evaluation set, through human review](docs/decisions/0007-feedback-loop-into-evals.md)
 
 ## Limitations
 
@@ -212,12 +247,16 @@ daily bill is bounded, and an 80% warning is logged before the cap is hit.
   exposing it, and rate-limit on the authenticated user instead.
 - **In-process metrics** reset on restart and are per replica. Production would export
   them to Prometheus or OpenTelemetry.
+- **Feedback is user data.** It holds users' questions and comments, isn't exposed over
+  the API, and needs a retention policy before real use. The file backend is single-node;
+  use `CACHE_BACKEND=redis` for several replicas.
 - **Small evaluation set.** 46 questions catch regressions but aren't enough to compare
   close configurations with statistical confidence.
 
 ## Roadmap
 
 - [x] Publish Claude evaluation results (`make eval-live`) next to the baseline
+- [x] User feedback that feeds the evaluation set, through human review
 - [ ] Hybrid retrieval: BM25 + embeddings in PostgreSQL/pgvector, kept only if hit@1 improves
 - [ ] OpenTelemetry tracing across retrieval and generation
 - [ ] Streaming responses for lower perceived latency
@@ -230,7 +269,7 @@ daily bill is bounded, and an 80% warning is logged before the cap is hit.
 |---|---|
 | **Retrieval engineer** | Hybrid retrieval on pgvector, grow the evaluation set to 300+ questions from real (anonymized) user queries |
 | **Platform engineer** | Auth via SSO, OpenTelemetry, Prometheus dashboards and alerting, autoscaling |
-| **Full-stack engineer** | Chat UI with conversation history, feedback buttons that feed the evaluation set |
+| **Full-stack engineer** | Chat UI with conversation history, a review queue for feedback candidates instead of editing JSONL |
 | **Applied AI engineer** | LLM-graded evaluations, model and effort tuning for cost, prompt-injection testing |
 
 My role: own the roadmap and the quality bar (no model, prompt or retrieval change ships
@@ -248,10 +287,11 @@ src/rag_service/
   llm.py          Claude provider and offline baseline
   cache.py        in-memory and Redis answer caches
   rate_limit.py   per-client token bucket
-  metrics.py      latency, cost and cache metrics
+  metrics.py      latency, cost, cache and feedback metrics
+  feedback.py     answer records and thumbs up/down storage (file or Redis)
   pricing.py      per-model token prices
   evaluation.py   evaluation metrics and report
-evals/            dataset, runner, published results
+evals/            dataset, runner, feedback-to-eval script, published results
 ui/               Streamlit front end
 data/handbook/    sample corpus (fictional company handbook)
 docs/decisions/   architecture decision records

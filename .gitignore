@@ -5,4 +5,7 @@ __pycache__/
 .ruff_cache/
 .env
 build/
+# User feedback and the candidates drafted from it contain users' questions.
+var/
+evals/candidates.jsonl
 dist/
