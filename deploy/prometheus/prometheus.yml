@@ -1,0 +1,16 @@
+# Scrapes the API. In docker compose, the "api" DNS name resolves to every container of
+# the api service, so each replica is scraped separately and dashboards sum across them.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  - job_name: rag-service
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: [api]
+        type: A
+        port: 8000

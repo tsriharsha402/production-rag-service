@@ -33,10 +33,27 @@ jobs:
         if: always()
         run: cat evals/results/offline.md >> "$GITHUB_STEP_SUMMARY"
 
+  observability:
+    runs-on: ubuntu-latest
+    env:
+      PROMETHEUS_VERSION: "3.5.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install promtool
+        run: |
+          curl -fsSL "https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz" \
+            | tar xz --strip-components=1 -C /usr/local/bin "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
+      - name: Check Prometheus config and alert rules
+        run: promtool check config deploy/prometheus/prometheus.yml
+      - name: Alert rule unit tests
+        run: promtool test rules deploy/prometheus/alerts_test.yml
+
   docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Validate compose file
+        run: docker compose config --quiet
       - name: Build image
         run: docker build -t production-rag-service .
       - name: Smoke test
@@ -51,3 +68,4 @@ jobs:
           curl -fs -X POST localhost:8000/v1/feedback \
             -H 'content-type: application/json' \
             -d "{\"answer_id\": \"$answer_id\", \"rating\": \"up\"}"
+          curl -fs localhost:8000/metrics | grep -E '^rag_feedback_votes_total\{rating="up"\} 1.0$'

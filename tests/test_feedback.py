@@ -131,6 +131,10 @@ def test_redis_store_shares_answers_and_feedback_across_replicas():
         def get(self, key):
             return self.values.get(key)
 
+        def set(self, key, value, keepttl=False):
+            assert keepttl, "re-saving a record must not reset its rating window"
+            self.values[key] = value
+
         def rpush(self, key, value):
             self.lists.setdefault(key, []).append(value)
 
@@ -142,6 +146,9 @@ def test_redis_store_shares_answers_and_feedback_across_replicas():
     replica_a.remember({"answer_id": "a1", "question": "q"})
     assert replica_b.lookup("a1") == {"answer_id": "a1", "question": "q"}
     assert not any(key.startswith("rag:answer:") for key in client.values)  # cache's prefix
+    assert replica_a.set_rating("a1", "up") is None
+    assert replica_b.set_rating("a1", "down") == "up"  # replica B sees A's vote
+    assert replica_a.set_rating("missing", "up") is None
     replica_b.add({"answer_id": "a1", "rating": "down"})
     assert replica_a.entries() == [{"answer_id": "a1", "rating": "down"}]
 
